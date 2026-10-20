@@ -16,7 +16,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 if _G.BCS_Unload then pcall(_G.BCS_Unload) end
 
 -- GLOBAL ENVIRONMENT
-local env = getgenv or _G
+local env = getgenv()
 env.LocalPlayer = Players.LocalPlayer
 env.playerGui = env.LocalPlayer:WaitForChild("PlayerGui")
 
