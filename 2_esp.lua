@@ -10,7 +10,7 @@ local Workspace           = game:GetService("Workspace")
 local Lighting            = game:GetService("Lighting")
 local HttpService         = game:GetService("HttpService")
 
-local env = getgenv or _G
+local env = getgenv()
 
 -- ESP HELPERS
 env.getRarityColor = function(rarityName)
