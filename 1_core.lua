@@ -17,7 +17,7 @@ if _G.BCS_Unload then pcall(_G.BCS_Unload) end
 
 -- GLOBAL ENVIRONMENT
 local env = getgenv or _G
-env.player    = Players.LocalPlayer
+env.LocalPlayer = Players.LocalPlayer
 env.playerGui = env.player:WaitForChild("PlayerGui")
 
 env.VERSION = "v6.4"
