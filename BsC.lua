@@ -1,6 +1,6 @@
 -- ============================================================
---  BACKROOMS CLOSET SUITE  v6.4
---  Stable Trimmed Build
+--  BACKROOMS CLOSET SUITE  v6.2
+--  Full Uncompressed Build - Part 1/3
 -- ============================================================
 
 local Players             = game:GetService("Players")
@@ -22,19 +22,32 @@ if _G.BCS_Unload then pcall(_G.BCS_Unload) end
 -- ============================================================
 --  STATE
 -- ============================================================
-local VERSION = "v6.4"
+local VERSION = "v6.2"
 local running = true
 local connections = {}
 local sessionStart = os.clock()
 local hasFS = (writefile ~= nil) and (readfile ~= nil) and (isfile ~= nil)
 
 local State = {
-    crateESP = true, crateTags = true, boxESP = true, boxTags = true,
-    monsterESP = true, monsterTags = true, pathLine = false,
-    redroomsESP = true, redroomsNotify = true, codeHUD = true, heavyDoorMarkers = false,
-    antiJumpscare = false, hideDestroyed = true,
-    showHits = true, autoSave = false, toasts = true, showBosses = true,
-    showHumans = true, showZombies = true, lockpickRadar = true,
+    crateESP = true,
+    boxESP = true,
+    monsterESP = true,
+    waypoints = true,
+    pathLine = false,
+    redroomsESP = true,
+    redroomsNotify = true,
+    codeHUD = true,
+    heavyDoorMarkers = false,
+    autoParry = false,
+    fullbright = false,
+    antiJumpscare = false,
+    hideDestroyed = true,
+    showHits = true,
+    autoSave = false,
+    toasts = true,
+    showBosses = true,
+    showHumans = true,
+    showZombies = true,
 }
 
 local RARITIES = {
@@ -43,8 +56,8 @@ local RARITIES = {
     {name = "Specialist",       color = Color3.fromRGB(255, 100, 100), enabled = true},
     {name = "Prototype",        color = Color3.fromRGB(150, 0, 0),     enabled = true},
     {name = "Contraband",       color = Color3.fromRGB(255, 215, 0),   enabled = true},
-    {name = "Exclusive",        color = Color3.fromRGB(0, 255, 255),   enabled = true},
-    {name = "Unobtainable",     color = Color3.fromRGB(255, 0, 255),   enabled = true},
+    {name = "Common",           color = Color3.fromRGB(200, 200, 200), enabled = true},
+    {name = "Field",            color = Color3.fromRGB(255, 150, 50),  enabled = true},
 }
 
 local WAYPOINTS_L0 = {
@@ -70,24 +83,23 @@ local REDROOMS_ENTRANCES = {
     {name = "Entrance 3", pos = Vector3.new(-135, 2, -425)},
     {name = "Entrance 4", pos = Vector3.new(-134, 2, 305)},
 }
+local REDROOMS_EXIT = {name = "Exit", pos = Vector3.new(2909, 370, 840)}
 
-local REDROOMS_EXTRA = {
-    {name = "Exit 1", pos = Vector3.new(1956, 375, 814)},
-    {name = "Exit 2", pos = Vector3.new(2919, 375, 822)},
-    {name = "Switch 1", pos = Vector3.new(2456, 378, 628)},
-    {name = "Switch 2", pos = Vector3.new(2506, 379, 1033)},
-    {name = "Maze Start", pos = Vector3.new(2333, 375, 141)},
-    {name = "Maze End", pos = Vector3.new(1975, 375, 97)},
-}
-for _, w in ipairs(REDROOMS_EXTRA) do table.insert(WAYPOINTS, w) end
-
-local REDROOMS_EXIT = {name = "Old Exit", pos = Vector3.new(2909, 370, 840)}
 local HEAVY_DOOR_POS   = Vector3.new(2447.7, 377.3, 330.8)
 local HEAVY_KEYPAD_POS = Vector3.new(2464.3, 375.4, 331.7)
+local CODE_DISPLAY_POS = Vector3.new(-49.9, -24.9, -476.3)
+
+local ATTACK_ANIMS = {
+    ["rbxassetid://132062634440694"] = "Skin Stealer", ["rbxassetid://93447566042287"]  = "Wanderer/Skin Stealer",
+    ["rbxassetid://16513826389"]     = "Wretch/Brute", ["rbxassetid://116270226290864"] = "Wretch/Brute",
+    ["rbxassetid://115057255000463"] = "Wretch",       ["rbxassetid://103058445318313"] = "Wretch",
+    ["rbxassetid://119638056060044"] = "Brute",        ["rbxassetid://99835657615739"]  = "Shrieker",
+    ["rbxassetid://84561718813387"]  = "Bacteria/Lancelot", ["rbxassetid://127192843487284"] = "Bacteria/Lancelot",
+}
 
 local QOL = {
     cullDistance = 1500, keybind = Enum.KeyCode.RightShift, accent = Color3.fromRGB(255, 150, 50),
-    toastDuration = 3.5, scale = nil, opacity = 0,
+    log = {}, logMax = 60, toastDuration = 3.5, scale = nil, opacity = 0,
     parryHoldDuration = 0.08, parryEngageRange = 25, monsterCullDistance = 1000, configPath = "BCS_Config",
 }
 
@@ -104,9 +116,8 @@ local selectedWaypoint, entranceMarkers, exitMarker = nil, {}, nil
 local Live = { boxes = 0, crates = 0, monsters = 0, counts = {}, nearestName = nil, nearestDist = nil, codeValue = nil, activeEntrances = 0 }
 
 local billboardContainer, waypointContainer, monsterContainer
-local lockpickGui, lpTargetDot, lpPlayerDot, lpTargetLabel
 local gui, mainFrame
-local _guiScaleValue = 1
+local guiScaleValue = 1
 local toggleGui = function() end
 local notify = function() end
 
@@ -217,26 +228,13 @@ local function hasTrackedAncestor(obj, tbl, stop)
     return false
 end
 
-local function createHighlight(adornee, color, transparency)
-    if not adornee then return nil end
-    local hl = Instance.new("Highlight")
-    hl.Name = "BCS_SafeHighlight"
-    hl.Adornee = adornee
-    hl.FillColor = color
-    hl.FillTransparency = transparency or 0.7
-    hl.OutlineColor = color
-    hl.OutlineTransparency = 0
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Parent = playerGui
-    return hl
-end
-
 -- ============================================================
 --  NOTIFICATIONS
 -- ============================================================
 local toastGui, toastHolder
 local activeToasts = {}
 local toastCount = 0
+local logDirty, logUnread = false, 0
 
 local function ensureToasts()
     if toastGui and toastGui.Parent then return end
@@ -271,6 +269,10 @@ notify = function(title, msg, color, icon, duration)
         elseif color == Theme.warn then icon = "!"
         else icon = "i" end
     end
+    table.insert(QOL.log, 1, {title = title, msg = msg or "", color = color, icon = icon, time = os.time()})
+    while #QOL.log > QOL.logMax do table.remove(QOL.log) end
+    logDirty = true
+    logUnread += 1
 
     if not running or not State.toasts then return end
     ensureToasts()
@@ -421,6 +423,21 @@ end
 -- ============================================================
 --  ESP HELPERS
 -- ============================================================
+local function parseRarity(name)
+    local lower = name:lower()
+    if lower:find("unobtainable") then return "Unobtainable" end
+    if lower:find("exclusive") then return "Exclusive" end
+    if lower:find("contraband") then return "Contraband" end
+    if lower:find("prototype") then return "Prototype" end
+    if lower:find("specialist") then return "Specialist" end
+    if lower:find("restricted") then return "Restricted" end
+    if lower:find("contractor") then return "Contractor-Grade" end
+    if lower:find("field") then return "Field-Grade" end
+    if lower:find("standard") then return "Standard Issue" end
+    if lower:find("common") then return "Standard Issue" end
+    return nil
+end
+
 local function getRarityColor(rarityName)
     for _, r in ipairs(RARITIES) do
         if r.name == rarityName then return r.color end
@@ -442,46 +459,14 @@ local function getLevelFolder(name)
     return g and g:FindFirstChild(name)
 end
 
-local function getRarity(obj, stopFolder)
-    local objName = obj.Name:lower()
-    if objName:find("contraband") then return "Contraband" end
-    if objName:find("prototype") then return "Prototype" end
-    if objName:find("specialist") then return "Specialist" end
-    if objName:find("restricted") then return "Restricted" end
-    if objName:find("contractor") then return "Contractor-Grade" end
-
+local function rarityFromHierarchy(obj, stop)
     local cur = obj
-    while cur and cur ~= stopFolder and cur ~= Workspace do
-        local rPart = cur:FindFirstChild("Rarity")
-        if rPart and rPart:IsA("BasePart") then
-            local c = rPart.Color
-            if c == Color3.fromRGB(37, 121, 255) then return "Contractor-Grade" end
-            if c.R > 0.8 and c.G < 0.3 and c.B < 0.3 then return "Prototype" end 
-            if c.R > 0.8 and c.G > 0.6 and c.B < 0.3 then return "Contraband" end
-            if c.R < 0.3 and c.G > 0.8 and c.B > 0.8 then return "Exclusive" end
-            if c.R > 0.3 and c.G < 0.3 and c.B > 0.8 then return "Restricted" end
-        end
-
-        local rVal = cur:FindFirstChild("Rarity")
-        if rVal and rVal:IsA("IntValue") then
-            local map = {
-                [3]="Contractor-Grade", [4]="Restricted", [5]="Specialist", 
-                [6]="Prototype", [7]="Contraband", [8]="Exclusive", 
-                [9]="Contraband", [10]="Unobtainable",
-            }
-            if map[rVal.Value] then return map[rVal.Value] end
-        end
-        
-        if cur ~= obj then
-            local lower = cur.Name:lower()
-            if lower == "restricted" then return "Restricted" end
-            if lower == "prototype" then return "Prototype" end
-            if lower == "contraband" then return "Contraband" end
-            if lower == "exclusive" then return "Exclusive" end
-        end
+    while cur and cur ~= stop and cur ~= Workspace do
+        local r = parseRarity(cur.Name)
+        if r then return r end
         cur = cur.Parent
     end
-    return "Contractor-Grade"
+    return nil
 end
 
 local function makeESPPill(size, offset, adornee, color, titleText, subText, container)
@@ -498,16 +483,42 @@ local function makeESPPill(size, offset, adornee, color, titleText, subText, con
 end
 
 -- ============================================================
---  BOX & CRATE & MONSTER ESP
+--  CLIENT-SAFE HIGHLIGHT FACTORY
+-- ============================================================
+local function createHighlight(adornee, color, transparency)
+    if not adornee then return nil end
+    local hl = Instance.new("Highlight")
+    hl.Name = "BCS_SafeHighlight"
+    hl.Adornee = adornee
+    hl.FillColor = color
+    hl.FillTransparency = transparency or 0.7
+    hl.OutlineColor = color
+    hl.OutlineTransparency = 0
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = playerGui -- Lives in PlayerGui, invisible to server
+    return hl
+end
+
+-- ============================================================
+--  BOX ESP
 -- ============================================================
 local function isBoxDestroyed(box)
     if not box.Parent then return true end
+    
+    -- 1. Check for the game's built-in Destroyed bool
     local d = box:FindFirstChild("Destroyed", true)
     if d and d:IsA("BoolValue") and d.Value then return true end
+    
+    -- 2. Check if the primary part is invisible
     local part = nil
-    if box:IsA("BasePart") then part = box
-    elseif box:IsA("Model") then part = box.PrimaryPart or box:FindFirstChildWhichIsA("BasePart", true) end
+    if box:IsA("BasePart") then
+        part = box
+    elseif box:IsA("Model") then
+        part = box.PrimaryPart or box:FindFirstChildWhichIsA("BasePart", true)
+    end
+    
     if part and part.Transparency >= 1 then return true end
+    
     return false
 end
 
@@ -525,7 +536,6 @@ local function removeBoxESP(box)
     local data = boxTracked[box]
     if data then
         if data.billboard then data.billboard:Destroy() end
-        if data.highlight then data.highlight:Destroy() end
         boxTracked[box] = nil
     end
 end
@@ -535,57 +545,30 @@ local function clearBoxes()
 end
 
 local function applyBoxESP(box)
-    if not State.boxESP and not State.boxTags then return end
-    if not billboardContainer or not box.Parent then return end
+    if not State.boxESP or not billboardContainer or not box.Parent then return end
     if boxTracked[box] then return end
     local folder = getLevelFolder("Boxes")
     if hasTrackedAncestor(box, boxTracked, folder) then return end
     if State.hideDestroyed and isBoxDestroyed(box) then return end
 
-    local rarityName = getRarity(box, folder)
+    local rarityName = rarityFromHierarchy(box, folder) or "Common"
     if not getRarityState(rarityName) then return end
 
     local color = getRarityColor(rarityName)
-    
     local adornee = box
-    local highlightTarget = box
-    if box:IsA("Model") then
-        local biggestPart = nil
-        local maxSize = 0
-        for _, child in ipairs(box:GetChildren()) do
-            if child:IsA("BasePart") and child.Name ~= "Rarity" then
-                local size = child.Size.X * child.Size.Y * child.Size.Z
-                if size > maxSize then
-                    maxSize = size
-                    biggestPart = child
-                end
-            end
-        end
-        if biggestPart then
-            adornee = biggestPart
-            highlightTarget = biggestPart
-        else
-            adornee = box.PrimaryPart or box
-        end
-    end
+    if box:IsA("Model") then adornee = box.PrimaryPart or box:FindFirstChildWhichIsA("BasePart", true) end
+    if not adornee then return end
 
     local billboard, info = makeESPPill(UDim2.fromOffset(190, 42), Vector3.new(0, 3, 0), adornee, color, "📦 " .. rarityName, "", billboardContainer)
-    billboard.Enabled = State.boxTags
-    local highlight = createHighlight(highlightTarget, color, 0.7)
-    if highlight then highlight.Enabled = State.boxESP end
-
-    boxTracked[box] = {color = color, billboard = billboard, infoLabel = info, adornee = adornee, rarityName = rarityName, highlight = highlight}
+    boxTracked[box] = {color = color, billboard = billboard, infoLabel = info, adornee = adornee, rarityName = rarityName}
     
-    track(adornee:GetPropertyChangedSignal("Transparency"):Connect(function()
+    table.insert(connections, adornee:GetPropertyChangedSignal("Transparency"):Connect(function()
         if adornee.Transparency >= 1 then removeBoxESP(box) end
-    end))
-    track(box.AncestryChanged:Connect(function()
-        if not box:IsDescendantOf(folder) then removeBoxESP(box) end
     end))
 end
 
 local function scanBoxes()
-    if not State.boxESP and not State.boxTags then return end
+    if not State.boxESP then return end
     local folder = getLevelFolder("Boxes")
     if not folder then return end
     for _, obj in ipairs(folder:GetDescendants()) do
@@ -598,11 +581,13 @@ local function scanBoxes()
     end
 end
 
+-- ============================================================
+--  CRATE ESP
+-- ============================================================
 local function removeESP(crate)
     local data = tracked[crate]
     if data then
         if data.billboard then data.billboard:Destroy() end
-        if data.highlight then data.highlight:Destroy() end
         tracked[crate] = nil
     end
 end
@@ -616,7 +601,6 @@ local function clearAllESP()
     clearBoxes()
     for m in pairs(monsterTracked) do
         if monsterTracked[m].billboard then monsterTracked[m].billboard:Destroy() end
-        if monsterTracked[m].highlight then monsterTracked[m].highlight:Destroy() end
     end
     tracked, boxTracked, monsterTracked = {}, {}, {}
     if billboardContainer then
@@ -629,56 +613,28 @@ local function isCrate(obj)
 end
 
 local function applyESP(crate)
-    if not State.crateESP and not State.crateTags then return end
-    if not billboardContainer or not crate.Parent then return end
+    if not State.crateESP or not billboardContainer or not crate.Parent then return end
     if tracked[crate] then return end
     local folder = getLevelFolder("LockpickCrates")
     if hasTrackedAncestor(crate, tracked, folder) then return end
 
-    local rarityName = getRarity(crate, folder)
+    local rarityName = rarityFromHierarchy(crate, folder) or "Contractor-Grade"
     if not getRarityState(rarityName) then return end
 
     local root = getRoot()
     if root and (root.Position - getPos(crate)).Magnitude > QOL.cullDistance then return end
 
     local color = getRarityColor(rarityName)
-    
     local adornee = crate
-    local highlightTarget = crate
-    if crate:IsA("Model") then
-        local biggestPart = nil
-        local maxSize = 0
-        for _, child in ipairs(crate:GetChildren()) do
-            if child:IsA("BasePart") and child.Name ~= "Rarity" then
-                local size = child.Size.X * child.Size.Y * child.Size.Z
-                if size > maxSize then
-                    maxSize = size
-                    biggestPart = child
-                end
-            end
-        end
-        if biggestPart then
-            adornee = biggestPart
-            highlightTarget = biggestPart
-        else
-            adornee = crate.PrimaryPart or crate
-        end
-    end
+    if crate:IsA("Model") then adornee = crate.PrimaryPart or crate:FindFirstChildWhichIsA("BasePart", true) end
+    if not adornee then return end
 
     local billboard, info = makeESPPill(UDim2.fromOffset(200, 44), Vector3.new(0, 5, 0), adornee, color, "🔒 " .. rarityName, "-- studs", billboardContainer)
-    billboard.Enabled = State.crateTags
-    local highlight = createHighlight(highlightTarget, color, 0.6)
-    if highlight then highlight.Enabled = State.crateESP end
-
-    tracked[crate] = {color = color, billboard = billboard, distLabel = info, adornee = adornee, rarityName = rarityName, highlight = highlight}
-    
-    track(crate.AncestryChanged:Connect(function()
-        if not crate:IsDescendantOf(folder) then removeESP(crate) end
-    end))
+    tracked[crate] = {color = color, billboard = billboard, distLabel = info, adornee = adornee, rarityName = rarityName}
 end
 
 local function scanCrates()
-    if not State.crateESP and not State.crateTags then return end
+    if not State.crateESP then return end
     local folder = getLevelFolder("LockpickCrates")
     if not folder then return end
     for _, obj in ipairs(folder:GetDescendants()) do
@@ -715,7 +671,13 @@ local function ensureWatchers()
     end
 end
 
-local MONSTER_IGNORE = {"vendor", "armory", "mechanic", "researcher", "turret", "rig", "dummy", "neutral", "bandit", "lfsg"}
+-- ============================================================
+--  MONSTER ESP
+-- ============================================================
+local MONSTER_IGNORE = {
+    "vendor", "armory", "mechanic", "researcher", "turret",
+    "rig", "dummy", "neutral",
+}
 local MONSTER_IGNORE_CATS = {"wanderer", "recon"}
 
 local function shouldIgnoreMonster(model)
@@ -744,6 +706,7 @@ local function classifyMonster(obj)
     if path:find("skin stealer") or path:find("dissolver") or path:find("wretch") or path:find("brute") then
         return "zombie", Color3.fromRGB(255, 100, 200)
     end
+    if path:find("bandit") or path:find("lfsg") then return "human", Color3.fromRGB(255, 150, 100) end
     return "misc", Theme.text
 end
 
@@ -761,7 +724,6 @@ local function removeMonsterESP(npc)
     local data = monsterTracked[npc]
     if data then
         if data.billboard then data.billboard:Destroy() end
-        if data.highlight then data.highlight:Destroy() end
         monsterTracked[npc] = nil
     end
 end
@@ -771,8 +733,7 @@ local function clearMonsters()
 end
 
 local function applyMonsterESP(npc)
-    if not State.monsterESP and not State.monsterTags then return end
-    if not monsterContainer or not npc.Parent then return end
+    if not State.monsterESP or not monsterContainer or not npc.Parent then return end
     if monsterTracked[npc] then return end
     if not isMonster(npc) then return end
 
@@ -781,23 +742,20 @@ local function applyMonsterESP(npc)
 
     local cat, color = classifyMonster(npc)
     if cat == "boss" and not State.showBosses then return end
+    if cat == "human" and not State.showHumans then return end
     if cat == "zombie" and not State.showZombies then return end
 
     local billboard = create("BillboardGui", {
         Name = "BCS_Billboard", Size = UDim2.fromOffset(160, 38), StudsOffset = Vector3.new(0, 3.5, 0),
         AlwaysOnTop = true, LightInfluence = 0, Adornee = hrp, Parent = monsterContainer,
-        Enabled = State.monsterTags
     })
     local pill = create("Frame", {Size = UDim2.fromScale(1, 1), BackgroundColor3 = Theme.card, BackgroundTransparency = 0.1, BorderSizePixel = 0, Parent = billboard}, {
         round(4), stroke(color, 1.5, 0.1),
     })
     local nameLabel = create("TextLabel", {Size = UDim2.new(1, 0, 0.55, 0), BackgroundTransparency = 1, Text = npc.Name, TextColor3 = color, TextSize = 13, Font = Enum.Font.GothamBold, TextTruncate = Enum.TextTruncate.AtEnd, Parent = pill})
     local infoLabel = create("TextLabel", {Size = UDim2.new(1, 0, 0.45, 0), Position = UDim2.fromScale(0, 0.55), BackgroundTransparency = 1, Text = "--", TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.Gotham, Parent = pill})
-    
-    local highlight = createHighlight(npc, color, 0.6)
-    if highlight then highlight.Enabled = State.monsterESP end
 
-    monsterTracked[npc] = {billboard = billboard, nameLabel = nameLabel, infoLabel = infoLabel, hrp = hrp, color = color, highlight = highlight}
+    monsterTracked[npc] = {billboard = billboard, nameLabel = nameLabel, infoLabel = infoLabel, hrp = hrp, color = color}
 end
 
 local function getNPCFolders()
@@ -813,7 +771,7 @@ local function getNPCFolders()
 end
 
 local function scanMonsters()
-    if not State.monsterESP and not State.monsterTags then return end
+    if not State.monsterESP then return end
     for _, folder in ipairs(getNPCFolders()) do
         for _, obj in ipairs(folder:GetDescendants()) do
             if obj:IsA("Model") and isMonster(obj) and not monsterTracked[obj] then
@@ -829,7 +787,7 @@ local function scanMonsters()
 end
 
 -- ============================================================
---  WAYPOINTS & REDROOMS
+--  WAYPOINTS
 -- ============================================================
 local function buildWaypoints()
     for _, wp in ipairs(WAYPOINTS) do
@@ -853,6 +811,9 @@ local function buildWaypoints()
     end
 end
 
+-- ============================================================
+--  REDROOMS MARKERS
+-- ============================================================
 local IDLE_COLOR    = Color3.fromRGB(150, 70, 230)
 local ACTIVE_COLOR  = Color3.fromRGB(255, 60, 60)
 local UNKNOWN_COLOR = Color3.fromRGB(140, 140, 150)
@@ -905,9 +866,6 @@ end
 local function buildRedrooms()
     for _, ent in ipairs(REDROOMS_ENTRANCES) do
         entranceMarkers[ent.name] = buildRedroomsMarker(ent.name, ent.pos, UNKNOWN_COLOR, "🚪 " .. ent.name .. " — ?")
-    end
-    for _, ent in ipairs(REDROOMS_EXTRA) do
-        entranceMarkers[ent.name] = buildRedroomsMarker(ent.name, ent.pos, EXIT_COLOR, "🚪 " .. ent.name)
     end
     exitMarker = buildRedroomsMarker(REDROOMS_EXIT.name, REDROOMS_EXIT.pos, EXIT_COLOR, "🚪 EXIT")
     exitMarker.state = "exit"
@@ -966,7 +924,6 @@ end
 -- ============================================================
 local codeHUDGui, codeHUDLabel, codeHUDStroke
 local cachedCode, codeLocked = nil, false
-local lastJobId = game.JobId
 
 local function findCodeLabel()
     local node = Workspace:FindFirstChild("Game")
@@ -993,20 +950,6 @@ local function findCodeLabel()
     return nil
 end
 
-local function findPasstextLabel()
-    local node = Workspace:FindFirstChild("Game")
-    node = node and node:FindFirstChild("Maps")
-    node = node and node:FindFirstChild("Level0")
-    node = node and node:FindFirstChild("Redrooms")
-    node = node and node:FindFirstChild("Puzzles")
-    node = node and node:FindFirstChild("HeavyDoorPuzzle")
-    node = node and node:FindFirstChild("Keypad")
-    node = node and node:FindFirstChild("Passtext")
-    node = node and node:FindFirstChild("SurfaceGui")
-    node = node and node:FindFirstChild("TextLabel")
-    return node
-end
-
 local function ensureCodeHUD()
     if codeHUDGui and codeHUDGui.Parent then return end
     codeHUDGui = create("ScreenGui", {Name = "CodeHUD", ResetOnSpawn = false, DisplayOrder = 9999, Parent = playerGui})
@@ -1031,19 +974,8 @@ local function updateCodeHUD()
         return
     end
     local tl = findCodeLabel()
-    
-    local passtext = findPasstextLabel()
-    if passtext and passtext.Text ~= "" then
-        if cachedCode then
-            codeHUDLabel.Text = cachedCode .. " (typing...)"
-            codeHUDLabel.TextColor3 = Theme.warn
-            codeHUDStroke.Color = Theme.warn
-        end
-        return
-    end
-
     if tl and tl.Text and tl.Text:match("^%d+$") then
-        if #tl.Text >= 4 and #tl.Text <= 10 and tl.Text ~= cachedCode then
+        if #tl.Text >= 6 and #tl.Text <= 10 and tl.Text ~= cachedCode then
             cachedCode = tl.Text
             codeHUDLabel.Text = cachedCode
             codeHUDLabel.TextColor3 = Theme.good
@@ -1066,8 +998,7 @@ end
 task.spawn(function()
     while running do
         task.wait(2)
-        if game.JobId ~= lastJobId then
-            lastJobId = game.JobId
+        if game.JobId ~= game.JobId then
             codeLocked = false
             cachedCode = nil
         end
@@ -1080,6 +1011,7 @@ local heavyDoorMarkers = {}
 local function buildHeavyDoorMarkers()
     if heavyDoorFolder then return end
     heavyDoorFolder = create("Folder", {Name = "BCS_HeavyDoor", Parent = Workspace.CurrentCamera})
+
     local function makeMarker(pos, color, label)
         local part = create("Part", {
             Name = "HeavyDoorMarker", Size = Vector3.new(1, 1, 1), Position = pos,
@@ -1092,33 +1024,86 @@ local function buildHeavyDoorMarkers()
         local info = create("TextLabel", {Size = UDim2.new(1, 0, 0.4, 0), Position = UDim2.fromScale(0, 0.6), BackgroundTransparency = 1, Text = "--", TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.Gotham, Parent = frame})
         table.insert(heavyDoorMarkers, {part = part, info = info})
     end
+
     makeMarker(HEAVY_DOOR_POS, Theme.bad, "🚪 HEAVY DOOR")
     makeMarker(HEAVY_KEYPAD_POS, Theme.accent, "⌨️ KEYPAD")
 end
 
 -- ============================================================
+--  AUTO-PARRY
+-- ============================================================
+local parryHooked = {}
+local parryLastTap = 0
+
+local function parryDistToMe(npc)
+    local root = getRoot()
+    local nrp = npc:FindFirstChild("HumanoidRootPart")
+    if root and nrp then return (root.Position - nrp.Position).Magnitude end
+    return nil
+end
+
+local function doParryTap()
+    local now = os.clock()
+    if now - parryLastTap < 0.25 then return end
+    parryLastTap = now
+    task.spawn(function()
+        pcall(function()
+            local qKey = Enum.KeyCode.Q
+            VirtualInputManager:SendKeyEvent(true, qKey, false, game)
+            task.wait(QOL.parryHoldDuration)
+            VirtualInputManager:SendKeyEvent(false, qKey, false, game)
+        end)
+    end)
+end
+
+local function hookParryAnimator(animator)
+    if parryHooked[animator] then return end
+    parryHooked[animator] = true
+
+    animator.AnimationPlayed:Connect(function(track)
+        if not State.autoParry then return end
+        local owner = animator:FindFirstAncestorOfClass("Model")
+        if not owner then return end
+        if Players:GetPlayerFromCharacter(owner) then return end
+
+        local animId = nil
+        pcall(function()
+            if track.Animation then animId = track.Animation.AnimationId end
+        end)
+        if not animId then return end
+
+        local enemy = ATTACK_ANIMS[animId]
+        if not enemy then return end
+
+        local d = parryDistToMe(owner)
+        if not d or d > QOL.parryEngageRange then return end
+
+        doParryTap()
+    end)
+end
+
+local function setupParryHooks()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Animator") then hookParryAnimator(obj) end
+    end
+    track(Workspace.DescendantAdded:Connect(function(obj)
+        if obj:IsA("Animator") then hookParryAnimator(obj) end
+    end))
+end
+
+-- ============================================================
 --  UTILITIES
 -- ============================================================
-local fbBackup = nil
-local ccConnections = {}
+local fullbrightBackup = nil
 local jumpscareConnection = nil
 local mutedSounds = {}
 
 local function enableFullbright()
-    if fbBackup then return end
-    fbBackup = { Brightness = Lighting.Brightness, Ambient = Lighting.Ambient, OutdoorAmbient = Lighting.OutdoorAmbient, FogEnd = Lighting.FogEnd, CC = {} }
-    for _, effect in ipairs(Lighting:GetChildren()) do
-        if effect:IsA("ColorCorrectionEffect") then
-            fbBackup.CC[effect] = {Enabled = effect.Enabled, Brightness = effect.Brightness, Contrast = effect.Contrast, TintColor = effect.TintColor}
-            effect.Enabled = false
-            effect.Brightness = 1
-            effect.Contrast = 0
-            effect.TintColor = Color3.new(1, 1, 1)
-            table.insert(ccConnections, track(effect:GetPropertyChangedSignal("Enabled"):Connect(function()
-                if fbBackup and effect.Enabled then effect.Enabled = false end
-            end)))
-        end
-    end
+    if fullbrightBackup then return end
+    fullbrightBackup = {
+        Brightness = Lighting.Brightness, Ambient = Lighting.Ambient,
+        OutdoorAmbient = Lighting.OutdoorAmbient, FogEnd = Lighting.FogEnd,
+    }
     Lighting.Brightness = 3
     Lighting.Ambient = Color3.fromRGB(180, 180, 180)
     Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
@@ -1126,22 +1111,10 @@ local function enableFullbright()
 end
 
 local function disableFullbright()
-    if not fbBackup then return end
-    for _, conn in ipairs(ccConnections) do conn:Disconnect() end
-    ccConnections = {}
-    Lighting.Brightness = fbBackup.Brightness
-    Lighting.Ambient = fbBackup.Ambient
-    Lighting.OutdoorAmbient = fbBackup.OutdoorAmbient
-    Lighting.FogEnd = fbBackup.FogEnd
-    for effect, data in pairs(fbBackup.CC) do
-        if effect and effect.Parent then
-            effect.Enabled = data.Enabled
-            effect.Brightness = data.Brightness
-            effect.Contrast = data.Contrast
-            effect.TintColor = data.TintColor
-        end
+    if fullbrightBackup then
+        for k, v in pairs(fullbrightBackup) do Lighting[k] = v end
+        fullbrightBackup = nil
     end
-    fbBackup = nil
 end
 
 local function isScareSound(obj)
@@ -1173,28 +1146,40 @@ local function disableAntiJumpscare()
     mutedSounds = {}
 end
 
+local hiddenParticles, originalEffects = {}, {}
+local function enableFPS()
+    for _, obj in ipairs(Lighting:GetChildren()) do 
+        if obj:IsA("PostEffect") then 
+            originalEffects[obj] = obj.Enabled
+            obj.Enabled = false 
+        end 
+    end
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then 
+            hiddenParticles[obj] = obj.Enabled
+            obj.Enabled = false 
+        end
+    end
+end
+
+local function disableFPS()
+    for obj, val in pairs(originalEffects) do if obj.Parent then obj.Enabled = val end end; originalEffects = {}
+    for obj, val in pairs(hiddenParticles) do if obj.Parent then obj.Enabled = val end end; hiddenParticles = {}
+end
+
 local effects = {
-    crateESP = function(v) 
-        for _, data in pairs(tracked) do if data.highlight then data.highlight.Enabled = v end end
-        if v then scanCrates() end
-    end,
-    crateTags = function(v) for _, data in pairs(tracked) do if data.billboard then data.billboard.Enabled = v end end end,
-    boxESP = function(v) 
-        for _, data in pairs(boxTracked) do if data.highlight then data.highlight.Enabled = v end end
-        if v then scanBoxes() end
-    end,
-    boxTags = function(v) for _, data in pairs(boxTracked) do if data.billboard then data.billboard.Enabled = v end end end,
-    monsterESP = function(v) 
-        for _, data in pairs(monsterTracked) do if data.highlight then data.highlight.Enabled = v end end
-        if v then scanMonsters() end
-    end,
-    monsterTags = function(v) for _, data in pairs(monsterTracked) do if data.billboard then data.billboard.Enabled = v end end end,
+    crateESP = function(v) if v then scanCrates() else clearCrates() end end,
+    boxESP = function(v) if v then scanBoxes() else clearBoxes() end end,
+    monsterESP = function(v) if v then scanMonsters() else clearMonsters() end end,
     redroomsESP = function(v) for _, m in pairs(entranceMarkers) do m.billboard.Enabled = v end; if exitMarker then exitMarker.billboard.Enabled = v end end,
+    waypoints = function(v) for name, ui in pairs(waypointUI) do ui.billboard.Enabled = v and wpStates[name] ~= false end end,
     pathLine = function(v) if not v then for _, part in ipairs(pathParts) do if part and part.Parent then part:Destroy() end end; pathParts = {} end end,
     fullbright = function(v) if v then enableFullbright() else disableFullbright() end end,
     antiJumpscare = function(v) if v then enableAntiJumpscare() else disableAntiJumpscare() end end,
+    fpsBoost = function(v) if v then enableFPS() else disableFPS() end end,
     hideDestroyed = function() clearBoxes(); scanBoxes() end,
     showBosses = function() clearMonsters(); scanMonsters() end,
+    showHumans = function() clearMonsters(); scanMonsters() end,
     showZombies = function() clearMonsters(); scanMonsters() end,
     heavyDoorMarkers = function(v) 
         if v then 
@@ -1205,7 +1190,6 @@ local effects = {
         end
     end,
     codeHUD = function(v) updateCodeHUD() end,
-    lockpickRadar = function(v) if not v then if lpTargetDot then lpTargetDot.Visible = false end; if lpPlayerDot then lpPlayerDot.Visible = false end end end,
 }
 
 local function rescanAll()
@@ -1222,6 +1206,7 @@ local function unload()
     for _, part in ipairs(pathParts) do if part and part.Parent then part:Destroy() end end
     pcall(disableFullbright)
     pcall(disableAntiJumpscare)
+    pcall(disableFPS)
     for _, a in pairs(waypointAnchors) do pcall(function() a:Destroy() end) end
     for _, m in pairs(entranceMarkers) do if m.anchor then pcall(function() m.anchor:Destroy() end) end end
     if exitMarker and exitMarker.anchor then pcall(function() exitMarker.anchor:Destroy() end) end
@@ -1229,7 +1214,6 @@ local function unload()
     if waypointContainer then waypointContainer:Destroy() end
     if monsterContainer then monsterContainer:Destroy() end
     if heavyDoorFolder then heavyDoorFolder:Destroy() end
-    if lockpickGui then lockpickGui:Destroy() end
     if gui then gui:Destroy() end
     if toastGui then toastGui:Destroy() end
     if codeHUDGui then codeHUDGui:Destroy() end
@@ -1239,7 +1223,7 @@ end
 _G.BCS_Unload = unload
 
 -- ============================================================
---  SMART PATHFINDING & LIVE UPDATE
+--  PATH LINE LOGIC
 -- ============================================================
 local function clearPath()
     for _, part in ipairs(pathParts) do
@@ -1250,47 +1234,38 @@ end
 
 local function makeMarker(pos, color)
     local part = create("Part", {
-        Name = "PathMarker", Size = Vector3.new(0.35, 0.35, 0.35), Position = pos,
-        Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false,
-        Material = Enum.Material.Neon, Color = color or Theme.accent, Transparency = 0.25,
-        Parent = Workspace.CurrentCamera,
+        Name = "PathMarker", Size = Vector3.new(0.5, 0.5, 0.5), Position = pos, Anchored = true, CanCollide = false,
+        Material = Enum.Material.Neon, Color = color, Transparency = 0.3, Parent = Workspace.CurrentCamera,
     })
     table.insert(pathParts, part)
 end
 
-local lastCalculatedPos = Vector3.zero
-local lastPathTarget = nil
+local function drawSegment(a, b, color)
+    local steps = math.max(1, math.floor((b - a).Magnitude / 5))
+    for i = 0, steps do 
+        makeMarker(a:Lerp(b, i / steps), color) 
+    end
+end
+
+local function drawManhattanPath(from, to)
+    local corner = Vector3.new(to.X, from.Y, from.Z)
+    drawSegment(from, corner, Theme.accent)
+    drawSegment(corner, to, Theme.accent)
+end
 
 task.spawn(function()
     while running do
-        task.wait(0.5)
         if State.pathLine and selectedWaypoint then
             local root = getRoot()
             if root then
-                local startPos = root.Position
-                local endPos = selectedWaypoint.pos
-                if (startPos - lastCalculatedPos).Magnitude > 5 or selectedWaypoint ~= lastPathTarget then
-                    lastCalculatedPos = startPos
-                    lastPathTarget = selectedWaypoint
-                    clearPath()
-                    local path = PathfindingService:CreatePath({ AgentRadius = 1, AgentHeight = 5, AgentCanJump = true, AgentJumpHeight = 7, AgentMaxSlope = 45, WaypointSpacing = 3 })
-                    local success = pcall(function() path:ComputeAsync(startPos, endPos) end)
-                    if success and path.Status == Enum.PathStatus.Success then
-                        for _, wp in ipairs(path:GetWaypoints()) do
-                            makeMarker(wp.Position + Vector3.new(0, 1, 0), Theme.accent)
-                        end
-                    else
-                        local dist = (startPos - endPos).Magnitude
-                        local steps = math.max(1, math.floor(dist / 5))
-                        for i = 0, steps do
-                            makeMarker(startPos:Lerp(endPos, i/steps) + Vector3.new(0, 1, 0), Theme.warn)
-                        end
-                    end
-                end
+                local from, to = root.Position, selectedWaypoint.pos
+                clearPath()
+                drawManhattanPath(from, to)
             end
         else
             clearPath()
         end
+        task.wait(0.5)
     end
 end)
 
@@ -1299,7 +1274,7 @@ local function liveUpdate()
     local rp = root and root.Position
     for _, wp in ipairs(WAYPOINTS) do
         local ui = waypointUI[wp.name]
-        if ui and wpStates[wp.name] and rp then
+        if ui and State.waypoints and wpStates[wp.name] and rp then
             ui.label.Text = "📍 " .. wp.name .. "  ·  " .. math.floor((rp - wp.pos).Magnitude) .. " studs"
             local col = (selectedWaypoint == wp) and Theme.good or Theme.accent2
             ui.label.TextColor3 = col
@@ -1372,8 +1347,9 @@ local function liveUpdate()
         if m and rp then m.distLabel.Text = math.floor((rp - m.pos).Magnitude) .. " studs" end
     end
     if exitMarker and rp then exitMarker.distLabel.Text = math.floor((rp - exitMarker.pos).Magnitude) .. " studs" end
-    if selectedWaypoint and root and _G.BCS_UI and _G.BCS_UI.targetInfo then
-        _G.BCS_UI.targetInfo.Text = math.floor((root.Position - selectedWaypoint.pos).Magnitude) .. " studs away"
+        -- Update Path Line target distance
+    if selectedWaypoint and root then
+        targetInfo.Text = math.floor((root.Position - selectedWaypoint.pos).Magnitude) .. " studs away"
     end
     if heavyDoorFolder and heavyDoorFolder.Parent then
         local positions = {HEAVY_DOOR_POS, HEAVY_KEYPAD_POS}
@@ -1403,103 +1379,8 @@ task.spawn(function()
         end)
     end
 end)
-
 -- ============================================================
---  LOCKPICK RADAR LOGIC
--- ============================================================
-lockpickGui = create("ScreenGui", {Name = "BCS_Lockpick", ResetOnSpawn = false, DisplayOrder = 9999, Parent = playerGui})
-lpTargetDot = create("Frame", {Size = UDim2.fromOffset(20, 20), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Theme.good, BorderSizePixel = 0, Visible = false, Parent = lockpickGui}, {round(10), stroke(Color3.new(1,1,1), 2, 0)})
-lpPlayerDot = create("Frame", {Size = UDim2.fromOffset(16, 16), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Theme.bad, BorderSizePixel = 0, Visible = false, Parent = lockpickGui}, {round(8)})
-lpTargetLabel = create("TextLabel", {Size = UDim2.fromOffset(260, 20), AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 0, -8), BackgroundTransparency = 1, TextColor3 = Theme.text, Font = Enum.Font.GothamBold, TextSize = 13, Text = "", Parent = lpTargetDot})
-
-local lpGui, lpFrame, lpPivot, lpIdle
-local lpTargetA, lpTargetB, lpFinalTarget = nil, nil, nil
-local lpLastDial, lpLastVol = nil, nil
-
-playerGui.ChildAdded:Connect(function(g)
-    if g.Name ~= "Lockpicking" then return end
-    lpGui = g
-    lpTargetA, lpTargetB, lpFinalTarget = nil, nil, nil
-    lpLastDial, lpLastVol = nil, nil
-    lpTargetDot.Visible = false; lpPlayerDot.Visible = false
-    lpFrame = g:WaitForChild("Frame", 2)
-    lpPivot = lpFrame and lpFrame:WaitForChild("Pivot2", 2)
-    task.spawn(function()
-        local s = g:WaitForChild("Sounds", 2)
-        lpIdle = s and s:WaitForChild("Idle", 3)
-    end)
-end)
-
-playerGui.ChildRemoved:Connect(function(g)
-    if g.Name == "Lockpicking" then 
-        lpGui, lpFrame, lpPivot, lpIdle = nil, nil, nil, nil 
-        lpTargetDot.Visible = false; lpPlayerDot.Visible = false 
-    end
-end)
-
-RunService.RenderStepped:Connect(function()
-    if not State.lockpickRadar or not lpGui or not lpGui.Parent or not lpFrame or not lpPivot then 
-        if lpTargetDot.Visible then lpTargetDot.Visible = false; lpPlayerDot.Visible = false end
-        return 
-    end
-    local dial = lpPivot.Rotation - 90 + lpFrame.Rotation
-    local holding = UserInputService:IsKeyDown(Enum.KeyCode.F)
-
-    if holding and lpIdle and lpIdle.IsPlaying then
-        local vol = lpIdle.Volume
-        if vol > 0.501 and vol <= 1.25 then
-            local dist = 90 * (1 - vol)
-            lpTargetA = math.clamp(dial + dist, 0, 180)
-            lpTargetB = math.clamp(dial - dist, 0, 180)
-            if dial + dist > 180 then lpTargetA = nil end
-            if dial - dist < 0 then lpTargetB = nil end
-            if lpTargetA and not lpTargetB then lpFinalTarget = lpTargetA end
-            if lpTargetB and not lpTargetA then lpFinalTarget = lpTargetB end
-            if not lpFinalTarget and lpLastDial and math.abs(dial - lpLastDial) > 0.2 then
-                local movedRight = dial > lpLastDial
-                local volumeWentUp = vol > lpLastVol
-                if movedRight and volumeWentUp then lpFinalTarget = lpTargetA
-                elseif movedRight and not volumeWentUp then lpFinalTarget = lpTargetB
-                elseif not movedRight and volumeWentUp then lpFinalTarget = lpTargetB
-                elseif not movedRight and not volumeWentUp then lpFinalTarget = lpTargetA end
-            end
-            if not lpFinalTarget then lpLastDial = dial; lpLastVol = vol end
-        end
-    elseif not holding then
-        lpFinalTarget = nil; lpTargetA = nil; lpTargetB = nil; lpLastDial = nil; lpLastVol = nil
-    end
-
-    local function getScreenPos(angle)
-        if not lpFrame or lpFrame.AbsoluteSize.X == 0 then return UDim2.new(0,0,0,0) end
-        local cx = lpFrame.AbsolutePosition.X + (lpFrame.AbsoluteSize.X / 2)
-        local cy = lpFrame.AbsolutePosition.Y + (lpFrame.AbsoluteSize.Y / 2)
-        local r = lpFrame.AbsoluteSize.X / 2
-        local rad = math.rad(angle)
-        return UDim2.fromOffset(cx - math.cos(rad) * r, cy - math.sin(rad) * r)
-    end
-
-    if lpFrame and lpFrame.AbsoluteSize.X > 0 then
-        lpPlayerDot.Position = getScreenPos(dial)
-        lpPlayerDot.Visible = true
-    end
-    if lpFinalTarget then
-        lpTargetDot.Position = getScreenPos(lpFinalTarget)
-        lpTargetDot.Visible = true
-        local progress = math.clamp(lpFrame.Rotation / 180, 0, 1)
-        if holding then
-            lpTargetLabel.Text = string.format("Target: %.1f° | HOLD: %.0f%%", lpFinalTarget, progress * 100)
-            lpTargetDot.BackgroundColor3 = math.abs(dial - lpFinalTarget) > 5 and Theme.bad or Theme.good
-        else
-            lpTargetLabel.Text = string.format("Target: %.1f°", lpFinalTarget)
-            lpTargetDot.BackgroundColor3 = Theme.good
-        end
-    else
-        lpTargetDot.Visible = false
-    end
-end)
-
--- ============================================================
---  UI HELPER FUNCTIONS
+--  UI COMPONENTS & MAIN GUI (Part 2/3)
 -- ============================================================
 
 local searchRegistry = {}
@@ -1529,6 +1410,14 @@ local function makeHeader(parent, title, subtitle)
     local f = create("Frame", {Size = UDim2.new(1, 0, 0, 52), BackgroundTransparency = 1, LayoutOrder = nextOrder(parent), Parent = parent})
     create("TextLabel", {Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, Text = title, TextColor3 = Theme.text, TextSize = 22, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, Parent = f})
     create("TextLabel", {Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 29), BackgroundTransparency = 1, Text = subtitle or "", TextColor3 = Theme.subtext, TextSize = 12, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = f})
+    return f
+end
+
+local function makeNote(parent, text, color)
+    local f = create("Frame", {Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = Theme.card, BackgroundTransparency = 0.3, BorderSizePixel = 0, LayoutOrder = nextOrder(parent), Parent = parent}, {
+        round(4), stroke(color or Theme.stroke, 1, 0.55),
+    })
+    create("TextLabel", {Size = UDim2.new(1, -24, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1, Text = text, TextColor3 = color or Theme.subtext, TextSize = 11, Font = Enum.Font.Gotham, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Parent = f})
     return f
 end
 
@@ -1730,186 +1619,329 @@ local function makeStatCard(parent, icon, label)
     end
 end
 
-local function addGroup(text)
-    if #_G.BCS_UI.tabs > 0 then _G.BCS_UI.sideY += 8 end
-    create("TextLabel", {Size = UDim2.new(1, -16, 0, 18), Position = UDim2.fromOffset(16, _G.BCS_UI.sideY), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.subtext, TextTransparency = 0.3, TextSize = 10, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, Parent = _G.BCS_UI.tabScroll})
-    _G.BCS_UI.sideY += 20
-end
+local function buildGui()
+    local W, H, SIDE, TOP, FOOT = 740, 540, 180, 48, 28
+    local PAGE_X, PAGE_Y = SIDE + 12, 12
 
-local function selectTab(idx)
-    if _G.BCS_UI.searchBox.Text ~= "" then _G.BCS_UI.searchBox.Text = "" end
-    _G.BCS_UI.activeIndex = idx
-    for i, t in ipairs(_G.BCS_UI.tabs) do t.page.Visible = (i == idx) end
-    _G.BCS_UI.activePage = _G.BCS_UI.tabs[idx].page
-    for i, t in ipairs(_G.BCS_UI.tabs) do
-        local active = i == _G.BCS_UI.activeIndex
-        tween(t.btn, 0.2, {BackgroundTransparency = active and 0 or 1, BackgroundColor3 = Theme.card})
-        tween(t.name, 0.2, {TextColor3 = active and Theme.accent or Theme.subtext})
-        tween(t.ico, 0.2, {TextColor3 = active and Theme.accent or Theme.subtext})
-    end
-    _G.BCS_UI.activePage.Position = UDim2.fromOffset(192, 12 + 10)
-    tween(_G.BCS_UI.activePage, 0.2, {Position = UDim2.fromOffset(192, 12)})
-    if _G.BCS_UI.tabs[idx].onShow then _G.BCS_UI.tabs[idx].onShow() end
-end
+    gui = create("ScreenGui", {Name = "BCS_GUI", ResetOnSpawn = false, DisplayOrder = 500, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui})
 
-onAccent(function()
-    if not _G.BCS_UI.tabs then return end
-    for i, t in ipairs(_G.BCS_UI.tabs) do
-        local active = i == _G.BCS_UI.activeIndex
-        tween(t.name, 0.2, {TextColor3 = active and Theme.accent or Theme.subtext})
-        tween(t.ico, 0.2, {TextColor3 = active and Theme.accent or Theme.subtext})
-    end
-end)
+    mainFrame = create("CanvasGroup", {
+        Name = "Main", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(W, H),
+        BackgroundColor3 = Theme.bg, BorderSizePixel = 0, GroupTransparency = 1, Visible = false, Parent = gui,
+    }, {round(4)})
 
-local function createTab(label, icon)
-    local idx = #_G.BCS_UI.tabs + 1
-    local y = _G.BCS_UI.sideY
-    local btn = create("TextButton", {Size = UDim2.new(1, -16, 0, 28), Position = UDim2.fromOffset(8, y), BackgroundColor3 = Theme.card, BackgroundTransparency = 1, AutoButtonColor = false, Text = "", BorderSizePixel = 0, Parent = _G.BCS_UI.tabScroll}, {round(4)})
-    local ico = create("TextLabel", {Size = UDim2.fromOffset(24, 28), Position = UDim2.fromOffset(4, 0), BackgroundTransparency = 1, Text = icon, TextSize = 14, Font = Enum.Font.Gotham, TextColor3 = Theme.subtext, Parent = btn})
-    local nameLbl = create("TextLabel", {Size = UDim2.new(1, -32, 1, 0), Position = UDim2.fromOffset(28, 0), BackgroundTransparency = 1, Text = label, TextSize = 13, Font = Enum.Font.Gotham, TextColor3 = Theme.subtext, TextXAlignment = Enum.TextXAlignment.Left, Parent = btn})
-    local badge = create("TextLabel", {Size = UDim2.fromOffset(22, 16), Position = UDim2.new(1, -26, 0.5, -8), BackgroundColor3 = Theme.accent, Text = "0", TextColor3 = Theme.bg, TextSize = 10, Font = Enum.Font.GothamBold, Visible = false, BorderSizePixel = 0, Parent = btn}, {round(4)})
-    local page = create("ScrollingFrame", {
-        Size = UDim2.new(1, -(192 + 12), 1, -(28 + 12 + 8)), Position = UDim2.fromOffset(192, 12), BackgroundTransparency = 1, BorderSizePixel = 0,
-        ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.stroke, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Visible = false, Parent = _G.BCS_UI.body,
-    }, {
-        create("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}),
-        pad(0, 0, 8, 12),
-    })
-    onAccent(function() page.ScrollBarImageColor3 = Theme.stroke end)
-    btn.MouseEnter:Connect(function() if _G.BCS_UI.activeIndex ~= idx then tween(btn, 0.15, {BackgroundTransparency = 0.5, BackgroundColor3 = Theme.card}) end end)
-    btn.MouseLeave:Connect(function() if _G.BCS_UI.activeIndex ~= idx then tween(btn, 0.15, {BackgroundTransparency = 1}) end end)
-    btn.MouseButton1Click:Connect(function() selectTab(idx) end)
-    table.insert(_G.BCS_UI.tabs, {btn = btn, ico = ico, name = nameLbl, badge = badge, page = page, y = y})
-    _G.BCS_UI.sideY += 32
-    return page, _G.BCS_UI.tabs[idx]
-end
-
-local function bindToggle(parent, key, opts)
-    local obj
-    opts.state = State[key]
-    opts.callback = function(v)
-        State[key] = v
-        local fx = effects[key]
-        if fx then pcall(fx, v) end
-        for _, o in ipairs(_G.BCS_UI.boundToggles[key] or {}) do
-            if o ~= obj then o.Set(v, true) end
-        end
-        if not opts.quiet then notify(opts.label, v and "Enabled" or "Disabled", v and Theme.good or Theme.bad) end
-        scheduleAutoSave()
-    end
-    obj = makeToggle(parent, opts)
-    _G.BCS_UI.boundToggles[key] = _G.BCS_UI.boundToggles[key] or {}
-    table.insert(_G.BCS_UI.boundToggles[key], obj)
-    return obj
-end
-
-local function bindChip(parent, key, label)
-    local obj
-    obj = makeChip(parent, label, State[key], function(v)
-        State[key] = v
-        local fx = effects[key]
-        if fx then pcall(fx, v) end
-        for _, o in ipairs(_G.BCS_UI.boundToggles[key] or {}) do
-            if o ~= obj then o.Set(v, true) end
-        end
-        notify(label, v and "Enabled" or "Disabled", v and Theme.good or Theme.bad)
-        scheduleAutoSave()
+    local mainStroke = stroke(Theme.stroke, 1.5, 0.2)
+    mainStroke.Parent = mainFrame
+    local strokeGrad = create("UIGradient", {Parent = mainStroke})
+    onAccent(function()
+        strokeGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Theme.accent), ColorSequenceKeypoint.new(0.5, Theme.accent2), ColorSequenceKeypoint.new(1, Theme.accent)})
     end)
-    _G.BCS_UI.boundToggles[key] = _G.BCS_UI.boundToggles[key] or {}
-    table.insert(_G.BCS_UI.boundToggles[key], obj)
-    return obj
-end
 
-_G.BCS_UI.toggleGui = function(force)
-    local want = force; if want == nil then want = not _G.BCS_UI.isOpen end; if want == _G.BCS_UI.isOpen then return end; _G.BCS_UI.isOpen = want
-    if want then 
-        _G.BCS_UI.mainFrame.Visible = true; _G.BCS_UI.uiScale.Scale = _G.BCS_UI.userScale * 0.86; tween(_G.BCS_UI.uiScale, 0.45, {Scale = _G.BCS_UI.userScale}, Enum.EasingStyle.Back); tween(_G.BCS_UI.mainFrame, 0.3, {GroupTransparency = QOL.opacity})
-    else 
-        tween(_G.BCS_UI.uiScale, 0.22, {Scale = _G.BCS_UI.userScale * 0.92}, Enum.EasingStyle.Quad, Enum.EasingDirection.In); local tw = tween(_G.BCS_UI.mainFrame, 0.22, {GroupTransparency = 1}); tw.Completed:Connect(function() if not _G.BCS_UI.isOpen then _G.BCS_UI.mainFrame.Visible = false end end) 
+    local glow1 = create("Frame", {Size = UDim2.fromOffset(400, 400), Position = UDim2.new(1, -240, 0, -220), BackgroundColor3 = Theme.accent, BackgroundTransparency = 0.92, BorderSizePixel = 0, Parent = mainFrame}, {round(200)})
+    local glow2 = create("Frame", {Size = UDim2.fromOffset(400, 400), Position = UDim2.new(0, -200, 1, -230), BackgroundColor3 = Theme.accent2, BackgroundTransparency = 0.94, BorderSizePixel = 0, Parent = mainFrame}, {round(200)})
+    onAccent(function() glow1.BackgroundColor3 = Theme.accent; glow2.BackgroundColor3 = Theme.accent2 end)
+
+    local vp = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+    local userScale = QOL.scale or math.min(1, vp.X / (W + 60), vp.Y / (H + 60))
+    guiScaleValue = userScale
+    local uiScale = create("UIScale", {Scale = userScale, Parent = mainFrame})
+
+    local refreshTargets = function() end
+    local refreshUI = function() end
+    local rarToggles, wpToggles = {}, {}
+    local boundToggles = {}
+    local keyBtn, cullSlider, monsterCullSlider, scaleSlider, opacitySlider
+
+    local topbar = create("Frame", {Size = UDim2.new(1, 0, 0, TOP), BackgroundColor3 = Theme.panel, BackgroundTransparency = 0.1, BorderSizePixel = 0, Parent = mainFrame})
+    local topLine = create("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = Theme.stroke, BorderSizePixel = 0, Parent = topbar})
+    
+    local logo = create("Frame", {Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(12, 12), BorderSizePixel = 0, BackgroundColor3 = Theme.accent, Parent = topbar}, {round(4), create("TextLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "◈", TextColor3 = Theme.bg, TextSize = 16, Font = Enum.Font.GothamBold})})
+    
+    create("TextLabel", {Size = UDim2.fromOffset(190, 20), Position = UDim2.fromOffset(44, 6), BackgroundTransparency = 1, Text = "Backrooms Closet", TextColor3 = Theme.text, TextSize = 14, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, Parent = topbar})
+    local topSub = create("TextLabel", {Size = UDim2.fromOffset(190, 14), Position = UDim2.fromOffset(44, 24), BackgroundTransparency = 1, Text = VERSION, TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = topbar})
+    
+    local searchBox = create("TextBox", {Size = UDim2.fromOffset(200, 24), Position = UDim2.fromOffset(220, 12), BackgroundColor3 = Theme.bg, Text = "", PlaceholderText = "Search settings...", PlaceholderColor3 = Theme.subtext, TextColor3 = Theme.text, TextSize = 12, Font = Enum.Font.Gotham, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, BorderSizePixel = 0, Parent = topbar}, {round(4), pad(10, 0, 10, 0), stroke(Theme.stroke, 1, 0.5)})
+    
+    local function topButton(text, x, color, hoverColor)
+        local b = create("TextButton", {Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, x, 0, 10), BackgroundColor3 = color, AutoButtonColor = false, Text = text, TextColor3 = Theme.text, TextSize = 14, Font = Enum.Font.GothamBold, BorderSizePixel = 0, Parent = topbar}, {round(4)})
+        b.MouseEnter:Connect(function() tween(b, 0.15, {BackgroundColor3 = hoverColor}) end)
+        b.MouseLeave:Connect(function() tween(b, 0.15, {BackgroundColor3 = color}) end)
+        return b
     end
-end
-toggleGui = _G.BCS_UI.toggleGui
+    local minBtn = topButton("_", -72, Theme.card, Theme.cardHover); minBtn.TextSize = 18; minBtn.Position = UDim2.new(1, -72, 0, 7)
+    local closeBtn = topButton("X", -40, Theme.card, Theme.cardHover); closeBtn.TextColor3 = Theme.bad; closeBtn.Font = Enum.Font.GothamBlack
 
--- ============================================================
---  TAB BUILDER FUNCTIONS
--- ============================================================
-local function buildDashTab(pDash, chipHolder)
+    local dragging, dragStart, startPos = false, nil, nil
+    topbar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos = true, i.Position, mainFrame.Position
+        end
+    end)
+    track(UserInputService.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - dragStart
+            mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end))
+    track(UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end))
+
+    local body = create("Frame", {Size = UDim2.new(1, 0, 1, -TOP), Position = UDim2.fromOffset(0, TOP), BackgroundTransparency = 1, Parent = mainFrame})
+
+    local sidebar = create("Frame", {Size = UDim2.new(0, SIDE, 1, -FOOT), BackgroundColor3 = Theme.bg, BorderSizePixel = 0, Parent = body})
+    create("Frame", {Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0), BackgroundColor3 = Theme.stroke, BorderSizePixel = 0, Parent = sidebar})
+    local tabScroll = create("ScrollingFrame", {Size = UDim2.new(1, -1, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 2, ScrollBarImageColor3 = Theme.stroke, CanvasSize = UDim2.new(), Parent = sidebar}, {pad(0, 8, 0, 8)})
+    local footer = create("Frame", {Size = UDim2.new(1, -SIDE, 0, FOOT), Position = UDim2.new(0, SIDE, 1, -FOOT), BackgroundColor3 = Theme.panel, BorderSizePixel = 0, Parent = body})
+    local footLeft = create("TextLabel", {Size = UDim2.new(0.7, 0, 1, 0), Position = UDim2.fromOffset(14, 0), BackgroundTransparency = 1, Text = "", TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = footer})
+    local footRight = create("TextLabel", {Size = UDim2.new(0.3, -14, 1, 0), Position = UDim2.new(0.7, 0, 0, 0), BackgroundTransparency = 1, Text = "", TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Right, Parent = footer})
+
+    local prof = create("Frame", {Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 1, -48), BackgroundColor3 = Theme.card, BorderSizePixel = 0, Parent = sidebar}, {round(4), stroke(Theme.stroke, 1, 0.5)})
+    create("ImageLabel", {Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(8, 8), BackgroundColor3 = Theme.bg, BorderSizePixel = 0, Image = "", Parent = prof}, {round(4)})
+    create("TextLabel", {Size = UDim2.new(1, -44, 0, 16), Position = UDim2.fromOffset(40, 6), BackgroundTransparency = 1, Text = player.DisplayName, TextColor3 = Theme.text, TextSize = 12, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = prof})
+    local profSub = create("TextLabel", {Size = UDim2.new(1, -44, 0, 14), Position = UDim2.fromOffset(40, 20), BackgroundTransparency = 1, Text = "● Active", TextColor3 = Theme.good, TextSize = 10, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = prof})
+
+    local tabs, pages = {}, {}
+    local activeIndex, activePage = 0, nil
+    local sideY = 8
+    local pLog
+
+    local function refreshTabs()
+        for i, t in ipairs(tabs) do
+            local active = i == activeIndex
+            tween(t.btn, 0.2, {BackgroundTransparency = active and 0 or 1, BackgroundColor3 = Theme.card})
+            tween(t.name, 0.2, {TextColor3 = active and Theme.accent or Theme.subtext})
+            tween(t.ico, 0.2, {TextColor3 = active and Theme.accent or Theme.subtext})
+        end
+    end
+    onAccent(refreshTabs)
+
+    local function addGroup(text)
+        if #tabs > 0 then sideY += 8 end
+        create("TextLabel", {Size = UDim2.new(1, -16, 0, 18), Position = UDim2.fromOffset(16, sideY), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.subtext, TextTransparency = 0.3, TextSize = 10, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, Parent = tabScroll})
+        sideY += 20
+    end
+
+    local function selectTab(idx)
+        if searchBox.Text ~= "" then searchBox.Text = "" end
+        activeIndex = idx
+        for i, t in ipairs(tabs) do t.page.Visible = (i == idx) end
+        activePage = tabs[idx].page
+        refreshTabs()
+        activePage.Position = UDim2.fromOffset(PAGE_X, PAGE_Y + 10)
+        tween(activePage, 0.2, {Position = UDim2.fromOffset(PAGE_X, PAGE_Y)})
+        if tabs[idx].onShow then tabs[idx].onShow() end
+    end
+
+    local function createTab(label, icon)
+        local idx = #tabs + 1
+        local y = sideY
+        local btn = create("TextButton", {Size = UDim2.new(1, -16, 0, 28), Position = UDim2.fromOffset(8, y), BackgroundColor3 = Theme.card, BackgroundTransparency = 1, AutoButtonColor = false, Text = "", BorderSizePixel = 0, Parent = tabScroll}, {round(4)})
+        local ico = create("TextLabel", {Size = UDim2.fromOffset(24, 28), Position = UDim2.fromOffset(4, 0), BackgroundTransparency = 1, Text = icon, TextSize = 14, Font = Enum.Font.Gotham, TextColor3 = Theme.subtext, Parent = btn})
+        local nameLbl = create("TextLabel", {Size = UDim2.new(1, -32, 1, 0), Position = UDim2.fromOffset(28, 0), BackgroundTransparency = 1, Text = label, TextSize = 13, Font = Enum.Font.Gotham, TextColor3 = Theme.subtext, TextXAlignment = Enum.TextXAlignment.Left, Parent = btn})
+        local badge = create("TextLabel", {Size = UDim2.fromOffset(22, 16), Position = UDim2.new(1, -26, 0.5, -8), BackgroundColor3 = Theme.accent, Text = "0", TextColor3 = Theme.bg, TextSize = 10, Font = Enum.Font.GothamBold, Visible = false, BorderSizePixel = 0, Parent = btn}, {round(4)})
+        local page = create("ScrollingFrame", {
+            Size = UDim2.new(1, -(PAGE_X + 12), 1, -(FOOT + PAGE_Y + 8)), Position = UDim2.fromOffset(PAGE_X, PAGE_Y), BackgroundTransparency = 1, BorderSizePixel = 0,
+            ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.stroke, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            Visible = false, Parent = body,
+        }, {
+            create("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}),
+            pad(0, 0, 8, 12),
+        })
+        onAccent(function() page.ScrollBarImageColor3 = Theme.stroke end)
+        btn.MouseEnter:Connect(function() if activeIndex ~= idx then tween(btn, 0.15, {BackgroundTransparency = 0.5, BackgroundColor3 = Theme.card}) end end)
+        btn.MouseLeave:Connect(function() if activeIndex ~= idx then tween(btn, 0.15, {BackgroundTransparency = 1}) end end)
+        btn.MouseButton1Click:Connect(function() selectTab(idx) end)
+        table.insert(tabs, {btn = btn, ico = ico, name = nameLbl, badge = badge, page = page, y = y})
+        sideY += 32
+        return page, tabs[idx]
+    end
+
+    local function bindToggle(parent, key, opts)
+        local obj
+        opts.state = State[key]
+        opts.callback = function(v)
+            State[key] = v
+            local fx = effects[key]
+            if fx then pcall(fx, v) end
+            for _, o in ipairs(boundToggles[key] or {}) do
+                if o ~= obj then o.Set(v, true) end
+            end
+            if not opts.quiet then
+                notify(opts.label, v and "Enabled" or "Disabled", v and Theme.good or Theme.bad)
+            end
+            scheduleAutoSave()
+        end
+        obj = makeToggle(parent, opts)
+        boundToggles[key] = boundToggles[key] or {}
+        table.insert(boundToggles[key], obj)
+        return obj
+    end
+
+    local function bindChip(parent, key, label)
+        local obj
+        obj = makeChip(parent, label, State[key], function(v)
+            State[key] = v
+            local fx = effects[key]
+            if fx then pcall(fx, v) end
+            for _, o in ipairs(boundToggles[key] or {}) do
+                if o ~= obj then o.Set(v, true) end
+            end
+            notify(label, v and "Enabled" or "Disabled", v and Theme.good or Theme.bad)
+            scheduleAutoSave()
+        end)
+        boundToggles[key] = boundToggles[key] or {}
+        table.insert(boundToggles[key], obj)
+        return obj
+    end
+
+    -- === DASHBOARD ===
+    addGroup("MAIN")
+    local pDash = createTab("Dashboard", "◈")
     makeHeader(pDash, "Dashboard", "Live overview of everything the suite is tracking")
+
     local banner = create("Frame", {Size = UDim2.new(1, 0, 0, 70), BackgroundColor3 = Theme.card, BorderSizePixel = 0, LayoutOrder = nextOrder(pDash), Parent = pDash}, {round(4), stroke(Theme.accent, 1, 0.2)})
     create("TextLabel", {Size = UDim2.new(1, -30, 0, 28), Position = UDim2.fromOffset(18, 14), BackgroundTransparency = 1, Text = "Welcome, " .. player.DisplayName, TextColor3 = Theme.text, TextSize = 20, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, Parent = banner})
-    _G.BCS_UI.bannerSub = create("TextLabel", {Size = UDim2.new(1, -30, 0, 18), Position = UDim2.fromOffset(18, 40), BackgroundTransparency = 1, Text = "", TextColor3 = Theme.subtext, TextSize = 12, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = banner})
+    local bannerSub = create("TextLabel", {Size = UDim2.new(1, -30, 0, 18), Position = UDim2.fromOffset(18, 40), BackgroundTransparency = 1, Text = "", TextColor3 = Theme.subtext, TextSize = 12, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = banner})
 
     makeSection(pDash, "Live stats")
     local grid = create("Frame", {Size = UDim2.new(1, 0, 0, 170), BackgroundTransparency = 1, LayoutOrder = nextOrder(pDash), Parent = pDash}, {
         create("UIGridLayout", {CellSize = UDim2.new(1 / 3, -7, 0, 80), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder}),
     })
-    _G.BCS_UI.statBoxes  = makeStatCard(grid, "📦", "Boxes tracked")
-    _G.BCS_UI.statCrates  = makeStatCard(grid, "🔒", "Crates tracked")
-    _G.BCS_UI.statMonsters  = makeStatCard(grid, "👹", "Monsters tracked")
-    _G.BCS_UI.statTarget  = makeStatCard(grid, "🎯", "Target")
-    _G.BCS_UI.statRedrooms  = makeStatCard(grid, "🚪", "Redrooms active")
-    _G.BCS_UI.statCode  = makeStatCard(grid, "🔐", "Heavy Door code")
+    local statBoxes    = makeStatCard(grid, "📦", "Boxes tracked")
+    local statCrates   = makeStatCard(grid, "🔒", "Crates tracked")
+    local statMonsters = makeStatCard(grid, "👹", "Monsters tracked")
+    local statTarget   = makeStatCard(grid, "🎯", "Target")
+    local statRedrooms = makeStatCard(grid, "🚪", "Redrooms active")
+    local statCode     = makeStatCard(grid, "🔐", "Heavy Door code")
 
     makeSection(pDash, "Quick toggles")
-    chipHolder.Parent = pDash
-    chipHolder.Size = UDim2.new(1, 0, 0, 0)
-    chipHolder.AutomaticSize = Enum.AutomaticSize.Y
-    chipHolder.BackgroundTransparency = 1
-    chipHolder.LayoutOrder = nextOrder(pDash)
-    chipHolder:ClearAllChildren()
-    create("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Wraps = true, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = chipHolder})
-
+    local chipHolder = create("Frame", {Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = nextOrder(pDash), Parent = pDash}, {
+        create("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Wraps = true, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}),
+    })
     bindChip(chipHolder, "crateESP", "Crates")
     bindChip(chipHolder, "boxESP", "Boxes")
     bindChip(chipHolder, "monsterESP", "Monsters")
     bindChip(chipHolder, "redroomsESP", "Redrooms")
+    bindChip(chipHolder, "waypoints", "Waypoints")
+    bindChip(chipHolder, "autoParry", "Auto-Parry")
     bindChip(chipHolder, "codeHUD", "Code HUD")
-    bindChip(chipHolder, "lockpickRadar", "Lockpick Radar")
-end
+    bindChip(chipHolder, "fullbright", "Fullbright")
+    bindChip(chipHolder, "fpsBoost", "FPS Boost")
 
-local function buildFeaturesTab(pFeat)
+    -- === FEATURES ===
+    local pFeat = createTab("Features", "⚡")
     makeHeader(pFeat, "Features", "Toggle every system in the suite")
-    makeSection(pFeat, "ESP Highlights")
-    bindToggle(pFeat, "crateESP", {label = "Crate ESP", desc = "Outline crates with tags"})
-    bindToggle(pFeat, "boxESP", {label = "Box ESP", desc = "Outline boxes with tags"})
-    bindToggle(pFeat, "monsterESP", {label = "Monster ESP", desc = "Outline monsters with tags"})
+    makeSection(pFeat, "ESP")
+    bindToggle(pFeat, "crateESP", {label = "Crate ESP", desc = "Highlight crates"})
+    bindToggle(pFeat, "boxESP", {label = "Box ESP", desc = "Highlight boxes"})
+    bindToggle(pFeat, "monsterESP", {label = "Monster ESP", desc = "Show NPCs"})
+    bindToggle(pFeat, "redroomsESP", {label = "Redrooms ESP", desc = "Show entrances"})
+    makeSection(pFeat, "Filters")
+    bindToggle(pFeat, "showBosses", {label = "Show bosses", quiet = true})
+    bindToggle(pFeat, "showHumans", {label = "Show humans", quiet = true})
+    bindToggle(pFeat, "showZombies", {label = "Show zombies", quiet = true})
     makeSection(pFeat, "World")
-    bindToggle(pFeat, "lockpickRadar", {label = "Lockpick Radar", desc = "Show mathematical target solver for crates"})
-end
+    bindToggle(pFeat, "waypoints", {label = "Waypoints"})
+    bindToggle(pFeat, "fullbright", {label = "Fullbright"})
+    bindToggle(pFeat, "fpsBoost", {label = "FPS Boost (Potato Graphics)"})
+    makeSection(pFeat, "Auto-Parry")
+    bindToggle(pFeat, "autoParry", {label = "Auto-Parry", desc = "Tap Q on enemy attack"})
 
-local function buildRaritiesTab(pRar)
+    -- === RARITIES ===
+    addGroup("ESP")
+    local pRar = createTab("Rarities", "💎")
     makeHeader(pRar, "Rarities", "Filter which rarities show up")
     makeButtonRow(pRar, {
         {"Enable all", function()
-            for i, r in ipairs(RARITIES) do r.enabled = true; _G.BCS_UI.rarToggles[i].Set(true, true) end
+            for i, r in ipairs(RARITIES) do r.enabled = true; rarToggles[i].Set(true, true) end
             rescanAll(); scheduleAutoSave()
         end, "primary"},
         {"Disable all", function()
-            for i, r in ipairs(RARITIES) do r.enabled = false; _G.BCS_UI.rarToggles[i].Set(false, true) end
+            for i, r in ipairs(RARITIES) do r.enabled = false; rarToggles[i].Set(false, true) end
             rescanAll(); scheduleAutoSave()
         end},
     })
     makeSection(pRar, "Filters  ·  live counts")
     for i, rarity in ipairs(RARITIES) do
-        _G.BCS_UI.rarToggles[i] = makeToggle(pRar, {label = rarity.name, labelColor = rarity.color, swatch = rarity.color, state = rarity.enabled, badge = true, callback = function(v)
+        rarToggles[i] = makeToggle(pRar, {label = rarity.name, labelColor = rarity.color, swatch = rarity.color, state = rarity.enabled, badge = true, callback = function(v)
             rarity.enabled = v
             rescanAll(); scheduleAutoSave()
         end})
     end
-end
 
-local function buildNavigateTab(pNav)
+    -- === REDROOMS ===
+    local pRR = createTab("Redrooms", "🚪")
+    makeHeader(pRR, "Redrooms", "Entrance status, code, dashboard")
+    makeButtonRow(pRR, {
+        {"Entrance 1", function() selectedWaypoint = REDROOMS_ENTRANCES[1]; refreshTargets(); notify("Target set", "Entrance 1", Theme.good) end},
+        {"Entrance 2", function() selectedWaypoint = REDROOMS_ENTRANCES[2]; refreshTargets(); notify("Target set", "Entrance 2", Theme.good) end},
+    })
+    makeButtonRow(pRR, {
+        {"Entrance 3", function() selectedWaypoint = REDROOMS_ENTRANCES[3]; refreshTargets(); notify("Target set", "Entrance 3", Theme.good) end},
+        {"Entrance 4", function() selectedWaypoint = REDROOMS_ENTRANCES[4]; refreshTargets(); notify("Target set", "Entrance 4", Theme.good) end},
+    })
+    makeButtonRow(pRR, {
+        {"Exit", function() selectedWaypoint = REDROOMS_EXIT; refreshTargets(); notify("Target set", "Exit", Theme.good) end},
+        {"Heavy Door", function() selectedWaypoint = {name = "Heavy Door", pos = HEAVY_DOOR_POS}; refreshTargets(); notify("Target set", "Heavy Door", Theme.good) end},
+    })
+    makeSection(pRR, "Code info")
+    local codeInfoRow = create("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = Theme.card, BorderSizePixel = 0, LayoutOrder = nextOrder(pRR), Parent = pRR}, {round(4), stroke(Theme.accent, 1, 0.3)})
+    local codeInfoLabel = create("TextLabel", {Size = UDim2.new(1, -20, 1, 0), Position = UDim2.fromOffset(10, 0), BackgroundTransparency = 1, Text = "Code: searching...", TextColor3 = Theme.text, TextSize = 14, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, Parent = codeInfoRow})
+    task.spawn(function()
+        while running do
+            task.wait(1)
+            if Live.codeValue then
+                codeInfoLabel.Text = "Code: " .. Live.codeValue
+                codeInfoLabel.TextColor3 = Theme.good
+            else
+                codeInfoLabel.Text = "Code: not yet found"
+                codeInfoLabel.TextColor3 = Theme.subtext
+            end
+        end
+    end)
+    makeSection(pRR, "Toggles")
+    bindToggle(pRR, "redroomsESP", {label = "Show Redrooms markers", quiet = true})
+    bindToggle(pRR, "redroomsNotify", {label = "Notify when entrance opens"})
+
+    -- === WAYPOINTS ===
+    local pWp = createTab("Waypoints", "📍")
+    makeHeader(pWp, "Waypoints", "Choose which beacons to show")
+    local function wpToggle(wp)
+        if wpStates[wp.name] == nil then wpStates[wp.name] = true end
+        wpToggles[wp.name] = makeToggle(pWp, {label = "📍  " .. wp.name, state = wpStates[wp.name], callback = function(v)
+            wpStates[wp.name] = v
+            if waypointUI[wp.name] then waypointUI[wp.name].billboard.Enabled = v and State.waypoints end
+            scheduleAutoSave()
+        end})
+    end
+    local function wpBulk(list, v)
+        for _, wp in ipairs(list) do
+            wpStates[wp.name] = v
+            if wpToggles[wp.name] then wpToggles[wp.name].Set(v, true) end
+            if waypointUI[wp.name] then waypointUI[wp.name].billboard.Enabled = v and State.waypoints end
+        end
+        scheduleAutoSave()
+    end
+    makeSection(pWp, "Level 0")
+    makeButtonRow(pWp, {{"Show all", function() wpBulk(WAYPOINTS_L0, true) end}, {"Hide all", function() wpBulk(WAYPOINTS_L0, false) end}})
+    for _, wp in ipairs(WAYPOINTS_L0) do wpToggle(wp) end
+    makeSection(pWp, "Level 1")
+    makeButtonRow(pWp, {{"Show all", function() wpBulk(WAYPOINTS_L1, true) end}, {"Hide all", function() wpBulk(WAYPOINTS_L1, false) end}})
+    for _, wp in ipairs(WAYPOINTS_L1) do wpToggle(wp) end
+
+    -- === NAVIGATE ===
+    local pNav = createTab("Navigate", "🎯")
     makeHeader(pNav, "Navigate", "Pick a destination for the path line")
     local targetCard = create("Frame", {Size = UDim2.new(1, 0, 0, 66), BackgroundColor3 = Theme.card, BorderSizePixel = 0, LayoutOrder = nextOrder(pNav), Parent = pNav}, {round(4), cardGradient()})
     local targetStroke = stroke(Theme.stroke, 1.2, 0.4)
     targetStroke.Parent = targetCard
     create("TextLabel", {Size = UDim2.fromOffset(40, 66), Position = UDim2.fromOffset(10, 0), BackgroundTransparency = 1, Text = "🎯", TextSize = 24, Font = Enum.Font.Gotham, TextColor3 = Theme.text, Parent = targetCard})
     local targetName = create("TextLabel", {Size = UDim2.new(1, -70, 0, 24), Position = UDim2.fromOffset(56, 12), BackgroundTransparency = 1, Text = "No target selected", TextColor3 = Theme.subtext, TextSize = 16, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, Parent = targetCard})
-    _G.BCS_UI.targetInfo = create("TextLabel", {Size = UDim2.new(1, -70, 0, 16), Position = UDim2.fromOffset(56, 37), BackgroundTransparency = 1, Text = "Pick a location below", TextColor3 = Theme.subtext, TextSize = 12, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = targetCard})
+    local targetInfo = create("TextLabel", {Size = UDim2.new(1, -70, 0, 16), Position = UDim2.fromOffset(56, 37), BackgroundTransparency = 1, Text = "Pick a location below", TextColor3 = Theme.subtext, TextSize = 12, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = targetCard})
 
     local navRows = {}
-    _G.BCS_UI.refreshTargets = function()
+    refreshTargets = function()
         for _, r in ipairs(navRows) do
             local sel = selectedWaypoint == r.wp
             tween(r.btn, 0.2, {BackgroundColor3 = sel and Theme.accent:Lerp(Theme.panel, 0.45) or Theme.card})
@@ -1926,10 +1958,10 @@ local function buildNavigateTab(pNav)
             tween(targetStroke, 0.2, {Color = Theme.stroke, Transparency = 0.4})
         end
     end
-    onAccent(function() _G.BCS_UI.refreshTargets() end)
+    onAccent(function() refreshTargets() end)
 
     makeButtonRow(pNav, {
-        {"Clear target", function() selectedWaypoint = nil; _G.BCS_UI.refreshTargets() end},
+        {"Clear target", function() selectedWaypoint = nil; refreshTargets() end},
         {"Select nearest", function()
             local root = getRoot()
             if not root then return end
@@ -1938,10 +1970,10 @@ local function buildNavigateTab(pNav)
                 local d = (root.Position - wp.pos).Magnitude
                 if d < bd then bd = d; best = wp end
             end
-            if best then selectedWaypoint = best; _G.BCS_UI.refreshTargets(); notify("Target set", best.name, Theme.good) end
+            if best then selectedWaypoint = best; refreshTargets(); notify("Target set", best.name, Theme.good) end
         end, "primary"},
     })
-    bindToggle(pNav, "pathLine", {label = "Path Line (Smart)", desc = "Draw a route around walls to your selected target"})
+    bindToggle(pNav, "pathLine", {label = "Path Line", desc = "Draw a route to your selected target"})
 
     local function addNavSection(title, list, icon)
         makeSection(pNav, title)
@@ -1957,7 +1989,7 @@ local function buildNavigateTab(pNav)
             btn.MouseButton1Click:Connect(function()
                 if selectedWaypoint == wp then selectedWaypoint = nil
                 else selectedWaypoint = wp; notify("Target set", wp.name, Theme.good) end
-                _G.BCS_UI.refreshTargets()
+                refreshTargets()
             end)
             addSearch(pNav, btn, wp.name)
         end
@@ -1965,11 +1997,12 @@ local function buildNavigateTab(pNav)
     addNavSection("Level 0", WAYPOINTS_L0, "📍")
     addNavSection("Level 1", WAYPOINTS_L1, "📍")
     addNavSection("Redrooms", REDROOMS_ENTRANCES, "🚪")
-    addNavSection("Redrooms Extra", REDROOMS_EXTRA, "🚪")
-    _G.BCS_UI.refreshTargets()
-end
+    addNavSection("Redrooms exit", {REDROOMS_EXIT}, "🚪")
+    refreshTargets()
 
-local function buildConfigTab(pCfg)
+    -- === CONFIG ===
+    addGroup("SYSTEM")
+    local pCfg = createTab("Config", "🛠")
     makeHeader(pCfg, "Config", "Save / load profile slots")
     makeSection(pCfg, "Active slot")
     local slotRow = create("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = Theme.card, BorderSizePixel = 0, LayoutOrder = nextOrder(pCfg), Parent = pCfg}, {round(4), stroke(Theme.stroke, 1, 0.5)})
@@ -1981,45 +2014,61 @@ local function buildConfigTab(pCfg)
     local dropdownPanel = create("Frame", {Size = UDim2.new(1, 0, 0, 0), BackgroundColor3 = Theme.panel, BorderSizePixel = 0, LayoutOrder = nextOrder(pCfg), Visible = false, Parent = pCfg}, {round(4), stroke(Theme.accent, 1.5, 0.3)})
     create("UIListLayout", {Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = dropdownPanel}); create("UIPadding", {PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), Parent = dropdownPanel})
     local dropdownOpen = false
+    local function refreshSlotUI() slotBtn.Text = SLOT_NAMES[currentSlot] .. " ▾"; slotStatus.Text = "📁 " .. SLOT_NAMES[currentSlot] .. " · " .. getSlotStatus(currentSlot) end
     local function closeDropdown() dropdownOpen = false; tween(dropdownPanel, 0.15, {Size = UDim2.new(1, 0, 0, 0)}, Enum.EasingStyle.Quad, Enum.EasingDirection.In); task.delay(0.16, function() if not dropdownOpen then dropdownPanel.Visible = false end end) end
     for i = 1, SLOT_COUNT do
         local opt = create("TextButton", {Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = i == currentSlot and Theme.accent or Theme.card, AutoButtonColor = false, Text = SLOT_NAMES[i] .. "  ·  " .. getSlotStatus(i), TextColor3 = Theme.text, TextSize = 12, Font = Enum.Font.GothamBold, BorderSizePixel = 0, LayoutOrder = i, Parent = dropdownPanel}, {round(4)})
-        opt.MouseButton1Click:Connect(function() currentSlot = i; closeDropdown(); _G.BCS_UI.refreshSlotUI(); notify("Slot changed", SLOT_NAMES[i], Theme.accent) end)
+        opt.MouseButton1Click:Connect(function() currentSlot = i; closeDropdown(); refreshSlotUI(); notify("Slot changed", SLOT_NAMES[i], Theme.accent) end)
     end
     slotBtn.MouseButton1Click:Connect(function() dropdownOpen = not dropdownOpen; if dropdownOpen then dropdownPanel.Visible = true; dropdownPanel.Size = UDim2.new(1, 0, 0, 0); tween(dropdownPanel, 0.2, {Size = UDim2.new(1, 0, 0, 6 + SLOT_COUNT * 34)}, Enum.EasingStyle.Back) else closeDropdown() end end)
-    makeButtonRow(pCfg, {{"Save", function() local ok = saveSlot(currentSlot); if ok then notify("Slot " .. currentSlot, "Saved", Theme.good); _G.BCS_UI.refreshSlotUI() end end, "primary"}, {"Load", function() local ok = loadSlot(currentSlot); if ok then _G.BCS_UI.refreshUI(); notify("Slot " .. currentSlot, "Loaded", Theme.good); _G.BCS_UI.refreshSlotUI() end end}, {"Delete", function() if deleteSlot(currentSlot) then notify("Slot " .. currentSlot, "Deleted", Theme.bad); _G.BCS_UI.refreshSlotUI() end end, "danger"}})
+    makeButtonRow(pCfg, {{"Save", function() local ok = saveSlot(currentSlot); if ok then notify("Slot " .. currentSlot, "Saved", Theme.good); refreshSlotUI() end end, "primary"}, {"Load", function() local ok = loadSlot(currentSlot); if ok then refreshUI(); notify("Slot " .. currentSlot, "Loaded", Theme.good); refreshSlotUI() end end}, {"Delete", function() if deleteSlot(currentSlot) then notify("Slot " .. currentSlot, "Deleted", Theme.bad); refreshSlotUI() end end, "danger"}})
     makeToggle(pCfg, {label = "Auto-load on startup", state = autoLoadEnabled, callback = function(v) autoLoadEnabled = v; autoLoadSlot = currentSlot; scheduleAutoSave() end})
     bindToggle(pCfg, "autoSave", {label = "Auto-save changes"})
     makeSection(pCfg, "Range")
-    _G.BCS_UI.cullSlider = makeSlider(pCfg, "Crate/Box ESP range", 200, 3000, QOL.cullDistance, 50, "%d studs", function(v) QOL.cullDistance = v; clearCrates(); scanCrates(); scheduleAutoSave() end)
-    _G.BCS_UI.monsterCullSlider = makeSlider(pCfg, "Monster ESP range", 200, 3000, QOL.monsterCullDistance, 50, "%d studs", function(v) QOL.monsterCullDistance = v; scheduleAutoSave() end)
+    cullSlider = makeSlider(pCfg, "Crate/Box ESP range", 200, 3000, QOL.cullDistance, 50, "%d studs", function(v) QOL.cullDistance = v; clearCrates(); scanCrates(); scheduleAutoSave() end)
+    monsterCullSlider = makeSlider(pCfg, "Monster ESP range", 200, 3000, QOL.monsterCullDistance, 50, "%d studs", function(v) QOL.monsterCullDistance = v; scheduleAutoSave() end)
     makeSection(pCfg, "Keybind")
     local keyRow = create("Frame", {Size = UDim2.new(1, 0, 0, 50), BackgroundColor3 = Theme.card, BorderSizePixel = 0, LayoutOrder = nextOrder(pCfg), Parent = pCfg}, {round(4), stroke(Theme.stroke, 1, 0.5)})
     create("TextLabel", {Size = UDim2.new(0.5, 0, 0, 20), Position = UDim2.fromOffset(16, 8), BackgroundTransparency = 1, Text = "Toggle GUI key", TextColor3 = Theme.text, TextSize = 14, Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left, Parent = keyRow})
-    _G.BCS_UI.keyBtn = create("TextButton", {Size = UDim2.new(0.34, 0, 0, 28), Position = UDim2.new(0.62, 0, 0.5, -14), BackgroundColor3 = Theme.cardHover, AutoButtonColor = false, Text = QOL.keybind.Name, TextColor3 = Theme.text, TextSize = 13, Font = Enum.Font.GothamBold, BorderSizePixel = 0, Parent = keyRow}, {round(4), stroke(Theme.stroke, 1, 0.4)})
+    keyBtn = create("TextButton", {Size = UDim2.new(0.34, 0, 0, 28), Position = UDim2.new(0.62, 0, 0.5, -14), BackgroundColor3 = Theme.cardHover, AutoButtonColor = false, Text = QOL.keybind.Name, TextColor3 = Theme.text, TextSize = 13, Font = Enum.Font.GothamBold, BorderSizePixel = 0, Parent = keyRow}, {round(4), stroke(Theme.stroke, 1, 0.4)})
     local listening = false
-    _G.BCS_UI.keyBtn.MouseButton1Click:Connect(function() listening = true; _G.BCS_UI.keyBtn.Text = "press..."; _G.BCS_UI.keyBtn.TextColor3 = Theme.accent end)
-    track(UserInputService.InputBegan:Connect(function(input) if not listening or input.UserInputType ~= Enum.UserInputType.Keyboard then return end; listening = false; _G.BCS_UI.keyBtn.TextColor3 = Theme.text; if input.KeyCode == Enum.KeyCode.Escape then _G.BCS_UI.keyBtn.Text = QOL.keybind.Name; return end; QOL.keybind = input.KeyCode; _G.BCS_UI.keyBtn.Text = input.KeyCode.Name; notify("Keybind", "GUI toggle set to " .. input.KeyCode.Name, Theme.good); scheduleAutoSave() end))
+    keyBtn.MouseButton1Click:Connect(function() listening = true; keyBtn.Text = "press..."; keyBtn.TextColor3 = Theme.accent end)
+    track(UserInputService.InputBegan:Connect(function(input) if not listening or input.UserInputType ~= Enum.UserInputType.Keyboard then return end; listening = false; keyBtn.TextColor3 = Theme.text; if input.KeyCode == Enum.KeyCode.Escape then keyBtn.Text = QOL.keybind.Name; return end; QOL.keybind = input.KeyCode; keyBtn.Text = input.KeyCode.Name; notify("Keybind", "GUI toggle set to " .. input.KeyCode.Name, Theme.good); scheduleAutoSave() end))
 
-    _G.BCS_UI.refreshSlotUI = function() slotBtn.Text = SLOT_NAMES[currentSlot] .. " ▾"; slotStatus.Text = "📁 " .. SLOT_NAMES[currentSlot] .. " · " .. getSlotStatus(currentSlot) end
-end
+    pLog, logTab = createTab("Log", "📜")
+    makeHeader(pLog, "Activity log", "Everything the suite has told you this session")
+    makeButton(pLog, "Clear log", function() QOL.log = {}; logDirty = true end)
+    local logRows = {}
+    local function refreshLog()
+        for _, r in ipairs(logRows) do r:Destroy() end; logRows = {}
+        if #QOL.log == 0 then local empty = create("TextLabel", {Size = UDim2.new(1, 0, 0, 60), BackgroundTransparency = 1, Text = "Nothing here yet", TextColor3 = Theme.subtext, TextSize = 12, Font = Enum.Font.Gotham, LayoutOrder = 999, Parent = pLog}); table.insert(logRows, empty); return end
+        for i, e in ipairs(QOL.log) do
+            local row = create("Frame", {Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = Theme.card, BorderSizePixel = 0, LayoutOrder = 1000 + i, Parent = pLog}, {round(4), stroke(e.color, 1, 0.75)})
+            create("Frame", {Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(10, 10), BackgroundColor3 = Theme.panel:Lerp(e.color, 0.25), BorderSizePixel = 0, Parent = row}, {round(4), create("TextLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = e.icon or "i", TextColor3 = e.color, TextSize = 14, Font = Enum.Font.GothamBold})})
+            create("TextLabel", {Size = UDim2.new(1, -120, 0, 16), Position = UDim2.fromOffset(44, 6), BackgroundTransparency = 1, Text = e.title, TextColor3 = Theme.text, TextSize = 13, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
+            create("TextLabel", {Size = UDim2.new(1, -120, 0, 14), Position = UDim2.fromOffset(44, 23), BackgroundTransparency = 1, Text = e.msg, TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
+            create("TextLabel", {Size = UDim2.fromOffset(60, 16), Position = UDim2.new(1, -70, 0, 14), BackgroundTransparency = 1, Text = os.date("%H:%M:%S", e.time), TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Right, Parent = row})
+            table.insert(logRows, row)
+        end
+    end
+    logTab.onShow = function() logUnread = 0; refreshLog(); logDirty = false end
 
-local function buildSettingsTab(pSet)
+    local pSet = createTab("Settings", "⚙")
     makeHeader(pSet, "Settings", "Appearance, notifications, script control")
     makeSection(pSet, "Accent color")
     local swatchHolder = create("Frame", {Size = UDim2.new(1, 0, 0, 50), BackgroundColor3 = Theme.card, BorderSizePixel = 0, LayoutOrder = nextOrder(pSet), Parent = pSet}, {round(4), stroke(Theme.stroke, 1, 0.5), pad(16, 0, 16, 0), create("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder})})
-    _G.BCS_UI.accents = {Color3.fromRGB(255, 150, 50), Color3.fromRGB(0, 190, 255), Color3.fromRGB(0, 220, 130), Color3.fromRGB(255, 80, 160), Color3.fromRGB(255, 255, 255), Color3.fromRGB(180, 180, 200)}
-    _G.BCS_UI.swatchRings = {}
-    for i, c in ipairs(_G.BCS_UI.accents) do
+    local accents = {Color3.fromRGB(255, 150, 50), Color3.fromRGB(0, 190, 255), Color3.fromRGB(0, 220, 130), Color3.fromRGB(255, 80, 160), Color3.fromRGB(255, 255, 255), Color3.fromRGB(180, 180, 200)}
+    local swatchRings = {}
+    for i, c in ipairs(accents) do
         local sw = create("TextButton", {Size = UDim2.fromOffset(24, 24), BackgroundColor3 = c, Text = "", AutoButtonColor = false, BorderSizePixel = 0, LayoutOrder = i, Parent = swatchHolder}, {round(4)})
         local ring = stroke(Color3.new(1, 1, 1), 2, (QOL.accent == c) and 0 or 1); ring.Parent = sw
-        _G.BCS_UI.swatchRings[i] = ring
+        swatchRings[i] = ring
         sw.MouseEnter:Connect(function() tween(sw, 0.15, {Size = UDim2.fromOffset(28, 28)}) end); sw.MouseLeave:Connect(function() tween(sw, 0.15, {Size = UDim2.fromOffset(24, 24)}) end)
-        sw.MouseButton1Click:Connect(function() for j, r in ipairs(_G.BCS_UI.swatchRings) do tween(r, 0.2, {Transparency = j == i and 0 or 1}) end; QOL.accent = c; setAccent(c); scheduleAutoSave() end)
+        sw.MouseButton1Click:Connect(function() for j, r in ipairs(swatchRings) do tween(r, 0.2, {Transparency = j == i and 0 or 1}) end; QOL.accent = c; setAccent(c); scheduleAutoSave() end)
     end
     makeSection(pSet, "Interface")
-    _G.BCS_UI.scaleSlider = makeSlider(pSet, "GUI scale", 0.6, 1.3, _G.BCS_UI.userScale, 0.05, "%.2fx", function(v) _G.BCS_UI.userScale = v; _guiScaleValue = v; QOL.scale = v; _G.BCS_UI.uiScale.Scale = v; scheduleAutoSave() end)
-    _G.BCS_UI.opacitySlider = makeSlider(pSet, "Transparency", 0, 0.4, QOL.opacity, 0.05, "%.2f", function(v) QOL.opacity = v; if _G.BCS_UI.mainFrame.Visible then _G.BCS_UI.mainFrame.GroupTransparency = v end; scheduleAutoSave() end)
+    scaleSlider = makeSlider(pSet, "GUI scale", 0.6, 1.3, userScale, 0.05, "%.2fx", function(v) userScale = v; guiScaleValue = v; QOL.scale = v; uiScale.Scale = v; scheduleAutoSave() end)
+    opacitySlider = makeSlider(pSet, "Transparency", 0, 0.4, QOL.opacity, 0.05, "%.2f", function(v) QOL.opacity = v; if mainFrame.Visible then mainFrame.GroupTransparency = v end; scheduleAutoSave() end)
     makeSection(pSet, "Notifications")
     bindToggle(pSet, "toasts", {label = "Show notifications", desc = "Pop-up toasts", quiet = true})
     makeSlider(pSet, "Toast duration", 1.5, 8, QOL.toastDuration, 0.5, "%.1f s", function(v) QOL.toastDuration = v; scheduleAutoSave() end)
@@ -2037,174 +2086,99 @@ local function buildSettingsTab(pSet)
         cancel.MouseButton1Click:Connect(function() confirm:Destroy() end)
         ok.MouseButton1Click:Connect(function() confirm:Destroy(); notify("Unloading", "Cleaning up...", Theme.bad); task.wait(0.6); unload() end)
     end, "danger")
-end
 
--- ============================================================
---  MAIN BUILD GUI
--- ============================================================
-local function buildGui()
-    _G.BCS_UI.gui = create("ScreenGui", {Name = "BCS_GUI", ResetOnSpawn = false, DisplayOrder = 500, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui})
-    
-    local W, H, SIDE, TOP, FOOT = 740, 540, 180, 48, 28
-
-    _G.BCS_UI.mainFrame = create("CanvasGroup", {
-        Name = "Main", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(W, H),
-        BackgroundColor3 = Theme.bg, BorderSizePixel = 0, GroupTransparency = 1, Visible = false, Parent = _G.BCS_UI.gui,
-    }, {round(4)})
-
-    local mainStroke = stroke(Theme.stroke, 1.5, 0.2); mainStroke.Parent = _G.BCS_UI.mainFrame
-    local strokeGrad = create("UIGradient", {Parent = mainStroke})
-    onAccent(function() strokeGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Theme.accent), ColorSequenceKeypoint.new(0.5, Theme.accent2), ColorSequenceKeypoint.new(1, Theme.accent)}) end)
-
-    local glow1 = create("Frame", {Size = UDim2.fromOffset(400, 400), Position = UDim2.new(1, -240, 0, -220), BackgroundColor3 = Theme.accent, BackgroundTransparency = 0.92, BorderSizePixel = 0, Parent = _G.BCS_UI.mainFrame}, {round(200)})
-    local glow2 = create("Frame", {Size = UDim2.fromOffset(400, 400), Position = UDim2.new(0, -200, 1, -230), BackgroundColor3 = Theme.accent2, BackgroundTransparency = 0.94, BorderSizePixel = 0, Parent = _G.BCS_UI.mainFrame}, {round(200)})
-    onAccent(function() glow1.BackgroundColor3 = Theme.accent; glow2.BackgroundColor3 = Theme.accent2 end)
-
-    local vp = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
-    _G.BCS_UI.userScale = QOL.scale or math.min(1, vp.X / (W + 60), vp.Y / (H + 60))
-    _guiScaleValue = _G.BCS_UI.userScale
-    _G.BCS_UI.uiScale = create("UIScale", {Scale = _G.BCS_UI.userScale, Parent = _G.BCS_UI.mainFrame})
-
-    local topbar = create("Frame", {Size = UDim2.new(1, 0, 0, TOP), BackgroundColor3 = Theme.panel, BackgroundTransparency = 0.1, BorderSizePixel = 0, Parent = _G.BCS_UI.mainFrame})
-    create("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = Theme.stroke, BorderSizePixel = 0, Parent = topbar})
-    local _logo = create("Frame", {Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(12, 12), BorderSizePixel = 0, BackgroundColor3 = Theme.accent, Parent = topbar}, {round(4), create("TextLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "◈", TextColor3 = Theme.bg, TextSize = 16, Font = Enum.Font.GothamBold})})
-    create("TextLabel", {Size = UDim2.fromOffset(190, 20), Position = UDim2.fromOffset(44, 6), BackgroundTransparency = 1, Text = "Backrooms Closet", TextColor3 = Theme.text, TextSize = 14, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, Parent = topbar})
-    _G.BCS_UI.topSub = create("TextLabel", {Size = UDim2.fromOffset(190, 14), Position = UDim2.fromOffset(44, 24), BackgroundTransparency = 1, Text = VERSION, TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = topbar})
-    _G.BCS_UI.searchBox = create("TextBox", {Size = UDim2.fromOffset(200, 24), Position = UDim2.fromOffset(220, 12), BackgroundColor3 = Theme.bg, Text = "", PlaceholderText = "Search settings...", PlaceholderColor3 = Theme.subtext, TextColor3 = Theme.text, TextSize = 12, Font = Enum.Font.Gotham, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, BorderSizePixel = 0, Parent = topbar}, {round(4), pad(10, 0, 10, 0), stroke(Theme.stroke, 1, 0.5)})
-
-    local function topButton(text, x, color, hoverColor)
-        local b = create("TextButton", {Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, x, 0, 10), BackgroundColor3 = color, AutoButtonColor = false, Text = text, TextColor3 = Theme.text, TextSize = 14, Font = Enum.Font.GothamBold, BorderSizePixel = 0, Parent = topbar}, {round(4)})
-        b.MouseEnter:Connect(function() tween(b, 0.15, {BackgroundColor3 = hoverColor}) end)
-        b.MouseLeave:Connect(function() tween(b, 0.15, {BackgroundColor3 = color}) end)
-        return b
-    end
-    local minBtn = topButton("−", -72, Theme.card, Theme.cardHover); minBtn.TextSize = 18; minBtn.Position = UDim2.new(1, -72, 0, 7)
-    local closeBtn = topButton("✕", -40, Theme.card, Theme.cardHover); closeBtn.TextColor3 = Theme.bad; closeBtn.Font = Enum.Font.GothamBlack
-
-    local dragging, dragStart, startPos = false, nil, nil
-    topbar.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            dragging, dragStart, startPos = true, i.Position, _G.BCS_UI.mainFrame.Position
-        end
-    end)
-    track(UserInputService.InputChanged:Connect(function(i)
-        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local d = i.Position - dragStart
-            _G.BCS_UI.mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-        end
-    end))
-    track(UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
-    end))
-
-    _G.BCS_UI.body = create("Frame", {Size = UDim2.new(1, 0, 1, -TOP), Position = UDim2.fromOffset(0, TOP), BackgroundTransparency = 1, Parent = _G.BCS_UI.mainFrame})
-    local sidebar = create("Frame", {Size = UDim2.new(0, SIDE, 1, -FOOT), BackgroundColor3 = Theme.bg, BorderSizePixel = 0, Parent = _G.BCS_UI.body})
-    create("Frame", {Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0), BackgroundColor3 = Theme.stroke, BorderSizePixel = 0, Parent = sidebar})
-    _G.BCS_UI.tabScroll = create("ScrollingFrame", {Size = UDim2.new(1, -1, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 2, ScrollBarImageColor3 = Theme.stroke, CanvasSize = UDim2.new(), Parent = sidebar}, {pad(0, 8, 0, 8)})
-    local footer = create("Frame", {Size = UDim2.new(1, -SIDE, 0, FOOT), Position = UDim2.new(0, SIDE, 1, -FOOT), BackgroundColor3 = Theme.panel, BorderSizePixel = 0, Parent = _G.BCS_UI.body})
-    _G.BCS_UI.footLeft = create("TextLabel", {Size = UDim2.new(0.7, 0, 1, 0), Position = UDim2.fromOffset(14, 0), BackgroundTransparency = 1, Text = "", TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = footer})
-    _G.BCS_UI.footRight = create("TextLabel", {Size = UDim2.new(0.3, -14, 1, 0), Position = UDim2.new(0.7, 0, 0, 0), BackgroundTransparency = 1, Text = "", TextColor3 = Theme.subtext, TextSize = 11, Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Right, Parent = footer})
-
-    local prof = create("Frame", {Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 1, -48), BackgroundColor3 = Theme.card, BorderSizePixel = 0, Parent = sidebar}, {round(4), stroke(Theme.stroke, 1, 0.5)})
-    create("ImageLabel", {Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(8, 8), BackgroundColor3 = Theme.bg, BorderSizePixel = 0, Image = "", Parent = prof}, {round(4)})
-    create("TextLabel", {Size = UDim2.new(1, -44, 0, 16), Position = UDim2.fromOffset(40, 6), BackgroundTransparency = 1, Text = player.DisplayName, TextColor3 = Theme.text, TextSize = 12, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = prof})
-    create("TextLabel", {Size = UDim2.new(1, -44, 0, 14), Position = UDim2.fromOffset(40, 20), BackgroundTransparency = 1, Text = "● Active", TextColor3 = Theme.good, TextSize = 10, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, Parent = prof})
-
-    addGroup("MAIN")
-    local pDash = createTab("Dashboard", "◈")
-    local chipHolder = create("Frame", {BackgroundTransparency = 1, Parent = pDash})
-    buildDashTab(pDash, chipHolder)
-
-    local pFeat = createTab("Features", "⚡")
-    buildFeaturesTab(pFeat)
-
-    addGroup("ESP")
-    local pRar = createTab("Rarities", "💎")
-    buildRaritiesTab(pRar)
-
-    local pNav = createTab("Navigate", "🎯")
-    buildNavigateTab(pNav)
-
-    addGroup("SYSTEM")
-    local pCfg = createTab("Config", "🛠")
-    buildConfigTab(pCfg)
-
-    local pSet = createTab("Settings", "⚙")
-    buildSettingsTab(pSet)
-
-    _G.BCS_UI.tabScroll.CanvasSize = UDim2.fromOffset(0, _G.BCS_UI.sideY + 8)
-    _G.BCS_UI.searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        local q = string.lower(_G.BCS_UI.searchBox.Text); local list = searchRegistry[_G.BCS_UI.activePage]
+    tabScroll.CanvasSize = UDim2.fromOffset(0, sideY + 8)
+    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        local q = string.lower(searchBox.Text); local list = searchRegistry[activePage]
         if list then for _, e in ipairs(list) do e.row.Visible = (q == "" or string.find(e.text, q, 1, true) ~= nil) end end
     end)
-    
-    _G.BCS_UI.refreshUI = function()
-        for key, list in pairs(_G.BCS_UI.boundToggles) do for _, o in ipairs(list) do o.Set(State[key], true) end end
-        for i, r in ipairs(RARITIES) do _G.BCS_UI.rarToggles[i].Set(r.enabled, true) end
-        _G.BCS_UI.keyBtn.Text = QOL.keybind.Name; _G.BCS_UI.cullSlider.Set(QOL.cullDistance); _G.BCS_UI.monsterCullSlider.Set(QOL.monsterCullDistance); _G.BCS_UI.opacitySlider.Set(QOL.opacity)
-        if QOL.scale then _G.BCS_UI.userScale = QOL.scale; _guiScaleValue = _G.BCS_UI.userScale; _G.BCS_UI.uiScale.Scale = _G.BCS_UI.userScale; _G.BCS_UI.scaleSlider.Set(_G.BCS_UI.userScale) end
-        for i, c in ipairs(_G.BCS_UI.accents) do _G.BCS_UI.swatchRings[i].Transparency = (QOL.accent == c) and 0 or 1 end
+    refreshUI = function()
+        for key, list in pairs(boundToggles) do for _, o in ipairs(list) do o.Set(State[key], true) end end
+        for i, r in ipairs(RARITIES) do rarToggles[i].Set(r.enabled, true) end
+        for name, t in pairs(wpToggles) do t.Set(wpStates[name] ~= false, true) end
+        keyBtn.Text = QOL.keybind.Name; cullSlider.Set(QOL.cullDistance); monsterCullSlider.Set(QOL.monsterCullDistance); opacitySlider.Set(QOL.opacity)
+        if QOL.scale then userScale = QOL.scale; guiScaleValue = userScale; uiScale.Scale = userScale; scaleSlider.Set(userScale) end
+        for i, c in ipairs(accents) do swatchRings[i].Transparency = (QOL.accent == c) and 0 or 1 end
         for key, fn in pairs(effects) do pcall(fn, State[key]) end; rescanAll()
     end
-    
-    closeBtn.MouseButton1Click:Connect(function() _G.BCS_UI.toggleGui(false); notify("Menu hidden", "Press " .. QOL.keybind.Name .. " to reopen", Theme.accent) end)
-    minBtn.MouseButton1Click:Connect(function() 
-        _G.BCS_UI.minimized = not _G.BCS_UI.minimized; 
-        local dy = (H - TOP) / 2 * _G.BCS_UI.userScale; 
-        if _G.BCS_UI.minimized then 
-            _G.BCS_UI.body.Visible = false; _G.BCS_UI.searchBox.Visible = false; 
-            tween(_G.BCS_UI.mainFrame, 0.3, {Size = UDim2.fromOffset(W, TOP), Position = _G.BCS_UI.mainFrame.Position + UDim2.fromOffset(0, -dy)}) 
-        else 
-            tween(_G.BCS_UI.mainFrame, 0.3, {Size = UDim2.fromOffset(W, H), Position = _G.BCS_UI.mainFrame.Position + UDim2.fromOffset(0, dy)}); 
-            task.delay(0.15, function() _G.BCS_UI.body.Visible = true; _G.BCS_UI.searchBox.Visible = true end) 
-        end; 
-        minBtn.Text = _G.BCS_UI.minimized and "+" or "−" 
-    end)
-    track(UserInputService.InputBegan:Connect(function(input, processed) 
-        if processed then return end
-        if input.KeyCode == QOL.keybind then _G.BCS_UI.toggleGui() end 
-        if input.KeyCode == Enum.KeyCode.R then
-            codeLocked = false; cachedCode = nil
-            notify("Code Reset", "Listening for new code on the wall...", Theme.warn)
+    local isOpen, minimized = false, false
+    toggleGui = function(force)
+        local want = force; if want == nil then want = not isOpen end; if want == isOpen then return end; isOpen = want
+        if want then mainFrame.Visible = true; uiScale.Scale = userScale * 0.86; tween(uiScale, 0.45, {Scale = userScale}, Enum.EasingStyle.Back); tween(mainFrame, 0.3, {GroupTransparency = QOL.opacity})
+        else tween(uiScale, 0.22, {Scale = userScale * 0.92}, Enum.EasingStyle.Quad, Enum.EasingDirection.In); local tw = tween(mainFrame, 0.22, {GroupTransparency = 1}); tw.Completed:Connect(function() if not isOpen then mainFrame.Visible = false end end) end
+    end
+    closeBtn.MouseButton1Click:Connect(function() toggleGui(false); notify("Menu hidden", "Press " .. QOL.keybind.Name .. " to reopen", Theme.accent) end)
+    minBtn.MouseButton1Click:Connect(function() minimized = not minimized; local dy = (H - TOP) / 2 * userScale; if minimized then body.Visible = false; searchBox.Visible = false; tween(mainFrame, 0.3, {Size = UDim2.fromOffset(W, TOP), Position = mainFrame.Position + UDim2.fromOffset(0, -dy)}) else tween(mainFrame, 0.3, {Size = UDim2.fromOffset(W, H), Position = mainFrame.Position + UDim2.fromOffset(0, dy)}); task.delay(0.15, function() body.Visible = true; searchBox.Visible = true end) end; minBtn.Text = minimized and "+" or "-" end)
+    track(UserInputService.InputBegan:Connect(function(input, processed) if processed or listening then return end; if input.KeyCode == QOL.keybind then toggleGui() end end))
+    local fps, acc, frames = 60, 0, 0
+    track(RunService.RenderStepped:Connect(function(dt) acc += dt; frames += 1; if acc >= 0.5 then fps = math.floor(frames / acc + 0.5); acc, frames = 0, 0 end end))
+    task.spawn(function()
+        while running do
+            local root = getRoot()
+            footLeft.Text = string.format("📦 %d boxes    🔒 %d crates    👹 %d monsters    🎯 %s", Live.boxes, Live.crates, Live.monsters, selectedWaypoint and selectedWaypoint.name or "no target")
+            local ping = getPing(); footRight.Text = fps .. " FPS" .. (ping and ("   ·   " .. ping .. " ms") or ""); footRight.TextColor3 = fps >= 50 and Theme.good or (fps >= 30 and Theme.warn or Theme.bad)
+            topSub.Text = VERSION .. "   ·   " .. fmtTime(os.clock() - sessionStart)
+            statBoxes(tostring(Live.boxes)); statCrates(tostring(Live.crates)); statMonsters(tostring(Live.monsters))
+            if selectedWaypoint and root then statTarget(math.floor((root.Position - selectedWaypoint.pos).Magnitude) .. " studs", "Target  " .. selectedWaypoint.name, Theme.good) else statTarget("None", "Target") end
+            statRedrooms(Live.activeEntrances .. " / " .. #REDROOMS_ENTRANCES .. " active", nil, Live.activeEntrances > 0 and ACTIVE_COLOR or Theme.text)
+            statCode(Live.codeValue or "--", nil, Live.codeValue and Theme.good or Theme.text)
+            if root then local p = root.Position; bannerSub.Text = string.format("Session %s   ·   %d, %d, %d", fmtTime(os.clock() - sessionStart), p.X, p.Y, p.Z) else bannerSub.Text = "Session " .. fmtTime(os.clock() - sessionStart) end
+            for i, r in ipairs(RARITIES) do rarToggles[i].SetBadge(Live.counts[r.name] or 0) end
+            if activeIndex ~= 0 and tabs[activeIndex].page == pLog then logUnread = 0; if logDirty then refreshLog(); logDirty = false end end
+            logTab.badge.Visible = logUnread > 0 and tabs[activeIndex] ~= logTab; logTab.badge.Text = logUnread > 99 and "99+" or tostring(logUnread)
+            task.wait(0.4)
         end
-    end))
-    
+    end)
     selectTab(1)
 end
+-- ============================================================
+--  BOOT, CLEANUP & ARCH LOADER (Part 3/3)
+-- ============================================================
 
--- ============================================================
---  BOOT, CLEANUP & ARCH LOADER
--- ============================================================
 local function cleanupOld()
     for _, obj in ipairs(Workspace:GetDescendants()) do
         local n = obj.Name
-        if n == "BCS_Highlight" or n == "BCS_Billboard" or n == "PathMarker" or n:find("^Waypoint_") or n:find("^BCS_Anchor") then
+        if n == "BCS_Highlight" or n == "BCS_Billboard" or n == "PathMarker"
+            or n:find("^Waypoint_") or n:find("^BCS_Anchor") then
             obj:Destroy()
         end
     end
     for _, g in ipairs(playerGui:GetChildren()) do
         local n = g.Name
-        if n == "BCS_GUI" or n == "BCS_Crates" or n == "BCS_Waypoints" or n == "BCS_Monsters" or n == "BCS_Loader" or n == "BCS_Toasts" or n == "BCS_Confirm" or n == "CodeHUD" or n == "BCS_Loader_Arch" or n == "BCS_Lockpick" then
+        if n == "BCS_GUI" or n == "BCS_Crates" or n == "BCS_Waypoints" or n == "BCS_Monsters"
+            or n == "BCS_Loader" or n == "BCS_Toasts" or n == "BCS_Confirm" or n == "CodeHUD" or n == "BCS_Loader_Arch" then
             g:Destroy()
         end
     end
 end
 
 local player_gui = player:WaitForChild("PlayerGui")
+
+-- Hard reset leftovers
 for _, g in ipairs(player_gui:GetChildren()) do
-    if g.Name:find("BCS") or g.Name == "CodeHUD" or g.Name == "MonsterESP" then pcall(function() g:Destroy() end) end
+    if g.Name:find("BCS") or g.Name == "CodeHUD" or g.Name == "MonsterESP" then
+        pcall(function() g:Destroy() end)
+    end
 end
 for _, obj in ipairs(Workspace:GetDescendants()) do
     local n = obj.Name
-    if n:find("^BCS_") or n:find("^Waypoint_") or n == "PathMarker" then pcall(function() obj:Destroy() end) end
+    if n:find("^BCS_") or n:find("^Waypoint_") or n == "PathMarker" then
+        pcall(function() obj:Destroy() end)
+    end
 end
-if Workspace.CurrentCamera:FindFirstChild("BCS_HeavyDoor") then Workspace.CurrentCamera.BCS_HeavyDoor:Destroy() end
+if Workspace.CurrentCamera:FindFirstChild("BCS_HeavyDoor") then
+    Workspace.CurrentCamera.BCS_HeavyDoor:Destroy()
+end
 _G.BCS_Unload = nil
 running = true
 
+-- Clean up old loader if it exists
 local oldLoader = playerGui:FindFirstChild("BCS_Loader_Arch")
 if oldLoader then oldLoader:Destroy() end
 
+-- ============================================================
+--  ARCH LOADER
+-- ============================================================
 local sg = create("ScreenGui", {Name = "BCS_Loader_Arch", IgnoreGuiInset = true, DisplayOrder = 9999, Parent = playerGui})
 local bg = create("Frame", {Size = UDim2.fromScale(1, 1), BackgroundColor3 = Theme.bg, Parent = sg})
 local terminal = create("Frame", {Size = UDim2.fromOffset(600, 350), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Parent = sg})
@@ -2235,12 +2209,17 @@ addLine("", Theme.text); addLine("(1/1) Checking keys in keyring... [##########]
 addLine("(1/1) Checking package integrity... [##########] 100%", Theme.text); task.wait(0.1)
 addLine("> DOWNLOAD COMPLETE.", Theme.good); task.wait(0.3)
 
+-- ============================================================
+--  INITIALIZATION
+-- ============================================================
 cleanupOld()
 billboardContainer = create("ScreenGui", {Name = "BCS_Crates", ResetOnSpawn = false, Parent = player_gui})
 waypointContainer = create("ScreenGui", {Name = "BCS_Waypoints", ResetOnSpawn = false, Parent = player_gui})
 monsterContainer = create("ScreenGui", {Name = "BCS_Monsters", ResetOnSpawn = false, Parent = player_gui})
 
-if autoLoadEnabled then pcall(loadSlot, autoLoadSlot) end
+if autoLoadEnabled then
+    pcall(loadSlot, autoLoadSlot)
+end
 
 buildGui()
 
@@ -2260,28 +2239,15 @@ if not setupRedroomsWatcher() then
     end)
 end
 
-for key, fn in pairs(effects) do pcall(fn, State[key]) end
+setupParryHooks()
 
-task.spawn(function()
-    local fps, acc, frames = 60, 0, 0
-    RunService.RenderStepped:Connect(function(dt) acc += dt; frames += 1; if acc >= 0.5 then fps = math.floor(frames / acc + 0.5); acc, frames = 0, 0 end end)
-    while running do
-        if _G.BCS_UI.footLeft then
-            local root = getRoot()
-            _G.BCS_UI.footLeft.Text = string.format("📦 %d boxes    🔒 %d crates    👹 %d monsters    🎯 %s", Live.boxes, Live.crates, Live.monsters, selectedWaypoint and selectedWaypoint.name or "no target")
-            local ping = getPing(); _G.BCS_UI.footRight.Text = fps .. " FPS" .. (ping and ("   ·   " .. ping .. " ms") or ""); _G.BCS_UI.footRight.TextColor3 = fps >= 50 and Theme.good or (fps >= 30 and Theme.warn or Theme.bad)
-            _G.BCS_UI.topSub.Text = VERSION .. "   ·   " .. fmtTime(os.clock() - sessionStart)
-            _G.BCS_UI.statBoxes(tostring(Live.boxes)); _G.BCS_UI.statCrates(tostring(Live.crates)); _G.BCS_UI.statMonsters(tostring(Live.monsters))
-            if selectedWaypoint and root then _G.BCS_UI.statTarget(math.floor((root.Position - selectedWaypoint.pos).Magnitude) .. " studs", "Target  " .. selectedWaypoint.name, Theme.good) else _G.BCS_UI.statTarget("None", "Target") end
-            _G.BCS_UI.statRedrooms(Live.activeEntrances .. " / " .. #REDROOMS_ENTRANCES .. " active", nil, Live.activeEntrances > 0 and ACTIVE_COLOR or Theme.text)
-            _G.BCS_UI.statCode(Live.codeValue or "--", nil, Live.codeValue and Theme.good or Theme.text)
-            if root then local p = root.Position; _G.BCS_UI.bannerSub.Text = string.format("Session %s   ·   %d, %d, %d", fmtTime(os.clock() - sessionStart), p.X, p.Y, p.Z) else _G.BCS_UI.bannerSub.Text = "Session " .. fmtTime(os.clock() - sessionStart) end
-            for i, r in ipairs(RARITIES) do _G.BCS_UI.rarToggles[i].SetBadge(Live.counts[r.name] or 0) end
-        end
-        task.wait(0.4)
-    end
-end)
+for key, fn in pairs(effects) do
+    pcall(fn, State[key])
+end
 
+-- ============================================================
+--  LOADER FADE OUT
+-- ============================================================
 for _, v in ipairs(terminal:GetDescendants()) do
     if v:IsA("TextLabel") then
         TweenService:Create(v, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = 1}):Play()
@@ -2293,6 +2259,9 @@ TweenService:Create(terminal, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.Eas
 task.wait(0.6)
 sg:Destroy()
 
+-- ============================================================
+--  FINAL STARTUP
+-- ============================================================
 toggleGui(true)
 task.delay(0.9, function()
     notify("Loaded", "Backrooms Closet Suite " .. VERSION .. "  ·  " .. QOL.keybind.Name .. " toggles menu", Theme.good)
