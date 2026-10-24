@@ -1,5 +1,5 @@
 -- ============================================================
---  BACKROOMS CLOSET SUITE  v7.0  —  SINGLE FILE BUILD
+--  BACKROOMS CLOSET SUITE  v7.1  —  SINGLE FILE BUILD
 -- ============================================================
 
 local Players             = game:GetService("Players")
@@ -14,6 +14,7 @@ local Stats               = game:GetService("Stats")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local player    = Players.LocalPlayer
+-- Added WaitForChild to fix the "attempt to index nil" error
 local playerGui = player:WaitForChild("PlayerGui")
 
 if _G.BCS_Unload then pcall(_G.BCS_Unload) end
@@ -21,7 +22,7 @@ if _G.BCS_Unload then pcall(_G.BCS_Unload) end
 -- ============================================================
 --  STATE
 -- ============================================================
-local VERSION = "v7.0"
+local VERSION = "v7.1"
 local running = true
 local connections = {}
 local sessionStart = os.clock()
@@ -49,7 +50,8 @@ local RARITIES = {
 }
 
 local WAYPOINTS_L0 = {
-    {name = "Armory",           pos = Vector3.new(-858, 6, -320)},
+    -- Updated Armory coordinates here
+    {name = "Armory",           pos = Vector3.new(-829, 6, -102)},
     {name = "Armory 2",         pos = Vector3.new(-471, 6, 242)},
     {name = "Stash Box",        pos = Vector3.new(-356, 6, 494)},
     {name = "Printer Room",     pos = Vector3.new(-149, 6, 406)},
@@ -206,6 +208,15 @@ local function hasTrackedAncestor(obj, tbl, stop)
     return false
 end
 
+-- Safely grab the protected executor UI container
+local function get_hidden_ui()
+    if gethui then
+        local success, ui = pcall(gethui)
+        if success and ui then return ui end
+    end
+    return playerGui
+end
+
 -- client-only anchor factory (never parent to Workspace)
 local function makeAnchor(name, pos)
     return create("Part", {
@@ -223,7 +234,7 @@ local logDirty, logUnread = false, 0
 
 local function ensureToasts()
     if toastGui and toastGui.Parent then return end
-    toastGui = create("ScreenGui", {Name = "BCS_Toasts", ResetOnSpawn = false, DisplayOrder = 1100, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui})
+    toastGui = create("ScreenGui", {Name = "BCS_Toasts", ResetOnSpawn = false, DisplayOrder = 1100, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = get_hidden_ui()})
     toastHolder = create("Frame", {AnchorPoint = Vector2.new(1,0), Position = UDim2.new(1,-16,0,12), Size = UDim2.fromOffset(330,600), BackgroundTransparency = 1, Parent = toastGui}, {
         create("UIListLayout", {Padding = UDim.new(0,8), HorizontalAlignment = Enum.HorizontalAlignment.Right, VerticalAlignment = Enum.VerticalAlignment.Top, SortOrder = Enum.SortOrder.LayoutOrder}),
     })
@@ -425,7 +436,7 @@ local function createHighlight(adornee, color, transparency)
     hl.OutlineColor = color
     hl.OutlineTransparency = 0
     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Parent = playerGui
+    hl.Parent = get_hidden_ui()
     return hl
 end
 
@@ -662,100 +673,112 @@ local function ensureWatchers()
         end
     end
 end
+-- ============================================================
+--  LOCKPICK RADAR (v13 logic, 0 new locals)
+-- ============================================================
+local effects = {
+    crateESP = function(v) if v then scanCrates() else clearCrates() end end,
+    boxESP = function(v) if v then scanBoxes() else clearBoxes() end end,
+    monsterESP = function(v) if v then scanMonsters() else clearMonsters() end end,
+    redroomsESP = function(v) for _, m in pairs(entranceMarkers) do m.billboard.Enabled = v end; if exitMarker then exitMarker.billboard.Enabled = v end end,
+    waypoints = function(v) for n, ui in pairs(waypointUI) do ui.billboard.Enabled = v and wpStates[n] ~= false end end,
+    pathLine = function(v) if not v then clearPath() end end,
+    fullbright = function(v) if v then enableFullbright() else disableFullbright() end end,
+    antiJumpscare = function(v) if v then enableAntiJumpscare() else disableAntiJumpscare() end end,
+    fpsBoost = function(v) if v then enableFPS() else disableFPS() end end,
+    hideDestroyed = function() clearBoxes(); scanBoxes() end,
+    showBosses = function() clearMonsters(); scanMonsters() end,
+    showHumans = function() clearMonsters(); scanMonsters() end,
+    showZombies = function() clearMonsters(); scanMonsters() end,
+    heavyDoorMarkers = function(v) if v then buildHeavyDoorMarkers() end end,
+    codeHUD = function() updateCodeHUD() end,
+    lockpickRadar = function(v)
+        if not v then
+            if _G.BCS_RadarConn then _G.BCS_RadarConn:Disconnect(); _G.BCS_RadarConn = nil end
+            if _G.BCS_RadarGui then _G.BCS_RadarGui:Destroy(); _G.BCS_RadarGui = nil end
+            return
+        end
+        if _G.BCS_RadarConn then return end
+        local pg = player:FindFirstChild("PlayerGui")
+        local function setupRadar()
+            local lg = pg:FindFirstChild("Lockpicking")
+            if not lg then return end
+            local frame = lg:FindFirstChild("Frame") or lg:FindFirstChildWhichIsA("Frame", true)
+            local pivot = lg:FindFirstChild("Pivot2", true)
+            local sounds = lg:FindFirstChild("Sounds", true)
+            local idle = sounds and sounds:FindFirstChild("Idle")
+            if not (frame and pivot and idle) then return end
+            if _G.BCS_RadarGui and _G.BCS_RadarGui.Parent then _G.BCS_RadarGui:Destroy() end
+            local sg = create("ScreenGui", {Name="BCS_LockpickRadar", ResetOnSpawn=false, IgnoreGuiInset=true, DisplayOrder=1200, Parent=get_hidden_ui()})
+            _G.BCS_RadarGui = sg
+            local dot = create("Frame", {Size=UDim2.fromOffset(20,20), AnchorPoint=Vector2.new(0.5,0.5), BackgroundColor3=Theme.good, BackgroundTransparency=0.1, BorderSizePixel=0, Visible=false, Parent=sg}, {round(10), stroke(Color3.new(1,1,1),2,0)})
+            local myDot = create("Frame", {Size=UDim2.fromOffset(16,16), AnchorPoint=Vector2.new(0.5,0.5), BackgroundColor3=Theme.bad, BackgroundTransparency=0.2, BorderSizePixel=0, Visible=false, Parent=sg}, {round(8)})
+            local lbl = create("TextLabel", {Size=UDim2.fromOffset(260,20), AnchorPoint=Vector2.new(0.5,1), Position=UDim2.new(0.5,0,0,-8), BackgroundTransparency=1, TextColor3=Theme.text, Font=Enum.Font.GothamBold, TextSize=13, Text="", Parent=dot})
+            local finalTarget, candidateA, candidateB, lastDial, lastVol = nil, nil, nil, nil, nil
+            _G.BCS_RadarConn = RunService.RenderStepped:Connect(function()
+                if not running or not lg.Parent or not frame or not pivot then return end
+                local dial = (pivot.Rotation or 0) - 90 + (frame.Rotation or 0)
+                local holding = UserInputService:IsKeyDown(Enum.KeyCode.F)
+                if holding and idle and idle.IsPlaying and not finalTarget then
+                    local vol = idle.Volume
+                    if vol >= 0.92 and vol <= 1.25 then
+                        local dist = 90 * (1 - vol)
+                        candidateA = math.clamp(dial + dist, 0, 180)
+                        candidateB = math.clamp(dial - dist, 0, 180)
+                        if dial + dist > 180 then candidateA = nil end
+                        if dial - dist < 0 then candidateB = nil end
+                        if candidateA and not candidateB then finalTarget = candidateA end
+                        if candidateB and not candidateA then finalTarget = candidateB end
+                        if not finalTarget and lastDial and math.abs(dial - lastDial) > 0.2 then
+                            local movedRight = dial > lastDial
+                            local volUp = vol > lastVol
+                            if movedRight and volUp then finalTarget = candidateA
+                            elseif movedRight and not volUp then finalTarget = candidateB
+                            elseif not movedRight and volUp then finalTarget = candidateB
+                            elseif not movedRight and not volUp then finalTarget = candidateA end
+                        end
+                        lastDial = dial; lastVol = vol
+                    end
+                end
+                local function getPos(angle)
+                    if frame.AbsoluteSize.X == 0 then return UDim2.new(0,0,0,0) end
+                    local cx = frame.AbsolutePosition.X + (frame.AbsoluteSize.X / 2)
+                    local cy = frame.AbsolutePosition.Y + (frame.AbsoluteSize.Y / 2)
+                    local r = frame.AbsoluteSize.X / 2
+                    local rad = math.rad(angle)
+                    return UDim2.fromOffset(cx - math.cos(rad) * r, cy - math.sin(rad) * r)
+                end
+                if frame.AbsoluteSize.X > 0 then myDot.Position = getPos(dial); myDot.Visible = true end
+                if finalTarget then
+                    dot.Position = getPos(finalTarget); dot.Visible = true
+                    local prog = math.clamp(frame.Rotation / 180, 0, 1)
+                    if holding then
+                        lbl.Text = string.format("Target: %.1f° | HOLD: %.0f%%", finalTarget, prog * 100)
+                        dot.BackgroundColor3 = math.abs(dial - finalTarget) > 5 and Theme.bad or Theme.good
+                    else
+                        lbl.Text = string.format("Target: %.1f° | Move to dot", finalTarget)
+                        dot.BackgroundColor3 = Theme.good
+                    end
+                else
+                    dot.Visible = false
+                    lbl.Text = "Searching (Hold F)..."
+                end
+            end)
+            table.insert(connections, _G.BCS_RadarConn)
+        end
+        setupRadar()
+        if not _G.BCS_RadarConn then
+            local conn; conn = pg.ChildAdded:Connect(function(c)
+                if c.Name == "Lockpicking" then task.wait(0.3); setupRadar() end
+            end)
+            table.insert(connections, conn)
+        end
+    end,
+}
+local function rescanAll() clearCrates(); clearBoxes(); clearMonsters(); scanCrates(); scanBoxes(); scanMonsters() end
 
 -- ============================================================
---  LOCKPICK RADAR
--- ============================================================
-local lockpickConn, lockpickActive = nil, false
-local lockpickCachedTarget = nil
-
-local function findLockpicking()
-    local pg = player:FindFirstChild("PlayerGui")
-    return pg and pg:FindFirstChild("Lockpicking")
-end
-
-local function resolveLockpickSide(dial, distance)
-    local a, b = dial + distance, dial - distance
-    local aOK = a >= 0 and a <= 180
-    local bOK = b >= 0 and b <= 180
-    if aOK and not bOK then return a end
-    if bOK and not aOK then return b end
-    if aOK and bOK then
-        -- pick the side closer to 90 (center) to avoid jumping off-arc
-        if math.abs(a - 90) < math.abs(b - 90) then return a else return b end
-    end
-    return nil
-end
-
-local function startLockpickRadar()
-    if lockpickActive then return end
-    local lg = findLockpicking()
-    if not lg then return end
-    local frame = lg:FindFirstChild("Frame") or lg:FindFirstChildWhichIsA("Frame", true)
-    local pivot = lg:FindFirstChild("Pivot2", true)
-    local sounds = lg:FindFirstChild("Sounds", true)
-    local idle = sounds and sounds:FindFirstChild("Idle")
-    if not (frame and pivot and idle) then return end
-    lockpickActive = true
-    lockpickConn = RunService.RenderStepped:Connect(function()
-        if not running or not State.lockpickRadar then
-            Live.lockpickDial = nil; Live.lockpickTarget = nil; return
-        end
-        local dial = (pivot.Rotation or 0) - 90 + (frame.Rotation or 0)
-        Live.lockpickDial = dial
-        local vol = idle.Volume
-        if UserInputService:IsKeyDown(Enum.KeyCode.F) and idle.IsPlaying and vol > 0.50 then
-            local dist = 90 * (1 - vol)
-            local tgt = resolveLockpickSide(dial, dist)
-            if tgt then
-                lockpickCachedTarget = tgt
-                Live.lockpickTarget = tgt
-            end
-        else
-            if lockpickCachedTarget then Live.lockpickTarget = lockpickCachedTarget end
-        end
-        -- draw dots via BillboardGui parented to PlayerGui (client-safe)
-        if not lockpickRadarGui then
-            lockpickRadarGui = create("ScreenGui", {Name = "BCS_LockpickRadar", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 1200, Parent = playerGui})
-        end
-        -- simple 2D overlay drawn from Frame.AbsolutePosition
-        local cx = frame.AbsolutePosition.X + frame.AbsoluteSize.X/2
-        local cy = frame.AbsolutePosition.Y + frame.AbsoluteSize.Y/2
-        local r = 90
-        local function dot(angle, color)
-            if not angle then return end
-            local x = cx - math.cos(math.rad(angle)) * r
-            local y = cy - math.sin(math.rad(angle)) * r
-            local d = lockpickRadarGui:FindFirstChild(tostring(color))
-            if not d then
-                d = create("Frame", {Name=tostring(color), Size=UDim2.fromOffset(8,8), BackgroundColor3=color, BorderSizePixel=0, Parent=lockpickRadarGui}, {round(4)})
-            end
-            d.Position = UDim2.fromOffset(x-4, y-4)
-        end
-        dot(dial, Color3.fromRGB(255,60,60))
-        dot(Live.lockpickTarget, Color3.fromRGB(80,255,120))
-    end)
-    table.insert(connections, lockpickConn)
-end
-
-local function stopLockpickRadar()
-    if lockpickConn then lockpickConn:Disconnect(); lockpickConn = nil end
-    lockpickActive = false; Live.lockpickDial = nil; Live.lockpickTarget = nil
-    if lockpickRadarGui then lockpickRadarGui:Destroy(); lockpickRadarGui = nil end
-end
-local lockpickRadarGui
-
-local function watchLockpickingGui()
-    local pg = player:FindFirstChild("PlayerGui")
-    if not pg then return end
-    track(pg.ChildAdded:Connect(function(c)
-        if c.Name == "Lockpicking" then task.wait(0.3); startLockpickRadar() end
-    end))
-    if pg:FindFirstChild("Lockpicking") then task.wait(0.3); startLockpickRadar() end
-end
-
--- ============================================================
---  HEAVY DOOR CODE HUD (pause while typing)
+--  HEAVY DOOR CODE HUD (FIXED: Stays visible, locks text)
 -- ============================================================
 local codeHUDGui, codeHUDLabel, codeHUDStroke
 local cachedCode, codeLocked = nil, false
@@ -791,7 +814,7 @@ local function findPasstextLabel()
 end
 local function ensureCodeHUD()
     if codeHUDGui and codeHUDGui.Parent then return end
-    codeHUDGui = create("ScreenGui", {Name="CodeHUD", ResetOnSpawn=false, DisplayOrder=9999, Parent=playerGui})
+    codeHUDGui = create("ScreenGui", {Name="CodeHUD", ResetOnSpawn=false, DisplayOrder=9999, Parent=get_hidden_ui()})
     local frame = create("Frame", {AnchorPoint=Vector2.new(0.5,0), Position=UDim2.new(0.5,0,0,20), Size=UDim2.fromOffset(340,60), BackgroundColor3=Theme.bg, BackgroundTransparency=0.1, BorderSizePixel=0, Parent=codeHUDGui}, {round(4)})
     codeHUDStroke = stroke(Theme.accent, 2, 0); codeHUDStroke.Parent = frame
     create("TextLabel", {Size=UDim2.new(1,0,0.4,0), BackgroundTransparency=1, Text="🔐 HEAVY DOOR CODE", TextColor3=Theme.subtext, TextSize=12, Font=Enum.Font.GothamBold, Parent=frame})
@@ -802,10 +825,7 @@ local function updateCodeHUD()
     ensureCodeHUD(); codeHUDGui.Enabled = true
     local passtext = findPasstextLabel()
     if passtext and passtext.Text ~= "" then
-        -- typing: pause, don't overwrite
-        codeHUDLabel.Text = "typing..."
-        codeHUDLabel.TextColor3 = Theme.warn
-        codeHUDStroke.Color = Theme.warn
+        -- Player is typing: DO NOTHING. Keep the HUD exactly as it is so they can read it.
         return
     end
     if codeLocked and cachedCode then
@@ -1046,7 +1066,7 @@ local function setupRedroomsWatcher()
 end
 
 -- ============================================================
---  PATHFINDING (AgentRadius=1, WaypointSpacing=3)
+--  PATHFINDING
 -- ============================================================
 local pathParts = pathParts or {}
 local function clearPath() for _, p in ipairs(pathParts) do if p and p.Parent then p:Destroy() end end; pathParts = {} end
@@ -1075,30 +1095,6 @@ local function updatePath()
     local wps = path:GetWaypoints()
     for i = 1, #wps-1 do drawSegment(wps[i].Position, wps[i+1].Position, Theme.accent) end
 end
-
--- ============================================================
---  EFFECTS TABLE
--- ============================================================
-local effects = {
-    crateESP = function(v) if v then scanCrates() else clearCrates() end end,
-    boxESP = function(v) if v then scanBoxes() else clearBoxes() end end,
-    monsterESP = function(v) if v then scanMonsters() else clearMonsters() end end,
-    redroomsESP = function(v) for _, m in pairs(entranceMarkers) do m.billboard.Enabled = v end; if exitMarker then exitMarker.billboard.Enabled = v end end,
-    waypoints = function(v) for n, ui in pairs(waypointUI) do ui.billboard.Enabled = v and wpStates[n] ~= false end end,
-    pathLine = function(v) if not v then clearPath() end end,
-    fullbright = function(v) if v then enableFullbright() else disableFullbright() end end,
-    antiJumpscare = function(v) if v then enableAntiJumpscare() else disableAntiJumpscare() end end,
-    fpsBoost = function(v) if v then enableFPS() else disableFPS() end end,
-    hideDestroyed = function() clearBoxes(); scanBoxes() end,
-    showBosses = function() clearMonsters(); scanMonsters() end,
-    showHumans = function() clearMonsters(); scanMonsters() end,
-    showZombies = function() clearMonsters(); scanMonsters() end,
-    heavyDoorMarkers = function(v) if v then buildHeavyDoorMarkers() end end,
-    codeHUD = function() updateCodeHUD() end,
-    lockpickRadar = function(v) if v then startLockpickRadar() else stopLockpickRadar() end end,
-}
-local function rescanAll() clearCrates(); clearBoxes(); clearMonsters(); scanCrates(); scanBoxes(); scanMonsters() end
-
 -- ============================================================
 --  UNLOAD
 -- ============================================================
@@ -1120,7 +1116,8 @@ local function unload()
     if gui then gui:Destroy() end
     if toastGui then toastGui:Destroy() end
     if codeHUDGui then codeHUDGui:Destroy() end
-    if lockpickRadarGui then lockpickRadarGui:Destroy() end
+    if _G.BCS_RadarGui then _G.BCS_RadarGui:Destroy(); _G.BCS_RadarGui = nil end
+    if _G.BCS_RadarConn then _G.BCS_RadarConn:Disconnect(); _G.BCS_RadarConn = nil end
 end
 _G.BCS_Unload = unload
 
@@ -1136,9 +1133,7 @@ local function addSearch(page, row, text)
 end
 
 UI.buildGui = function()
-    -- all UI locals live here; wiped when this function returns
     local acc = {Player=player, Theme=Theme}
-    -- -- helpers
     local function makeSection(parent, text)
         local holder = create("Frame", {Size=UDim2.new(1,0,0,24), BackgroundTransparency=1, LayoutOrder=nextOrder(parent), Parent=parent})
         local lbl = create("TextLabel", {Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X, BackgroundTransparency=1, Text=string.upper(text), TextColor3=Theme.subtext, TextSize=11, Font=Enum.Font.GothamBold, Parent=holder}, {pad(4,0,0,0)})
@@ -1262,11 +1257,10 @@ UI.buildGui = function()
         return function(v, lab, color) val.Text = v; val.TextColor3 = color or Theme.text; if lab then nm.Text = lab else nm.Text = label end end
     end
 
-    -- -- layout constants
     local W, H, SIDE, TOP, FOOT = 740, 540, 180, 48, 28
     local PAGE_X, PAGE_Y = SIDE + 12, 12
 
-    gui = create("ScreenGui", {Name="BCS_GUI", ResetOnSpawn=false, DisplayOrder=500, ZIndexBehavior=Enum.ZIndexBehavior.Sibling, Parent=playerGui})
+    gui = create("ScreenGui", {Name="BCS_GUI", ResetOnSpawn=false, DisplayOrder=500, ZIndexBehavior=Enum.ZIndexBehavior.Sibling, Parent=get_hidden_ui()})
     mainFrame = create("CanvasGroup", {Name="Main", AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.5), Size=UDim2.fromOffset(W,H), BackgroundColor3=Theme.bg, BorderSizePixel=0, GroupTransparency=1, Visible=false, Parent=gui}, {round(4)})
     local mainStroke = stroke(Theme.stroke, 1.5, 0.2); mainStroke.Parent = mainFrame
     local sg = create("UIGradient", {Parent=mainStroke})
@@ -1282,7 +1276,6 @@ UI.buildGui = function()
     local rarToggles, wpToggles, boundToggles = {}, {}, {}
     local keyBtn, cullSlider, monsterCullSlider, scaleSlider, opacitySlider
 
-    -- top bar
     local topbar = create("Frame", {Size=UDim2.new(1,0,0,TOP), BackgroundColor3=Theme.panel, BackgroundTransparency=0.1, BorderSizePixel=0, Parent=mainFrame})
     create("Frame", {Size=UDim2.new(1,0,0,1), Position=UDim2.new(0,0,1,-1), BackgroundColor3=Theme.stroke, BorderSizePixel=0, Parent=topbar})
     create("Frame", {Size=UDim2.fromOffset(24,24), Position=UDim2.fromOffset(12,12), BorderSizePixel=0, BackgroundColor3=Theme.accent, Parent=topbar}, {round(4), create("TextLabel", {Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Text="◈", TextColor3=Theme.bg, TextSize=16, Font=Enum.Font.GothamBold})})
@@ -1651,7 +1644,7 @@ UI.buildGui = function()
     makeSlider(pSet, "Toast duration", 1.5, 8, QOL.toastDuration, 0.5, "%.1f s", function(v) QOL.toastDuration = v; scheduleAutoSave() end)
     makeSection(pSet, "Script")
     makeButton(pSet, "Unload script", function()
-        local confirm = create("ScreenGui", {Name="BCS_Confirm", ResetOnSpawn=false, DisplayOrder=900, Parent=playerGui})
+        local confirm = create("ScreenGui", {Name="BCS_Confirm", ResetOnSpawn=false, DisplayOrder=900, Parent=get_hidden_ui()})
         local backdrop = create("Frame", {Size=UDim2.fromScale(1,1), BackgroundColor3=Color3.new(0,0,0), BackgroundTransparency=1, BorderSizePixel=0, Parent=confirm}); tween(backdrop,0.25,{BackgroundTransparency=0.45})
         local box = create("Frame", {AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.5), Size=UDim2.fromOffset(340,160), BackgroundColor3=Theme.panel, BorderSizePixel=0, Parent=backdrop}, {round(4), stroke(Theme.bad,1.5,0.3)})
         local bs = create("UIScale", {Scale=0.85, Parent=box}); tween(bs,0.35,{Scale=1}, Enum.EasingStyle.Back)
@@ -1757,7 +1750,7 @@ anchorFolder = create("Folder", {Name="BCS_Anchors", Parent=Workspace.CurrentCam
 -- ============================================================
 --  ARCH LOADER
 -- ============================================================
-local sg = create("ScreenGui", {Name="BCS_Loader_Arch", IgnoreGuiInset=true, DisplayOrder=9999, Parent=playerGui})
+local sg = create("ScreenGui", {Name="BCS_Loader_Arch", IgnoreGuiInset=true, DisplayOrder=9999, Parent=get_hidden_ui()})
 local bg = create("Frame", {Size=UDim2.fromScale(1,1), BackgroundColor3=Theme.bg, Parent=sg})
 local terminal = create("Frame", {Size=UDim2.fromOffset(600,350), Position=UDim2.fromScale(0.5,0.5), AnchorPoint=Vector2.new(0.5,0.5), BackgroundTransparency=1, Parent=sg})
 create("UIListLayout", {Padding=UDim.new(0,2), SortOrder=Enum.SortOrder.LayoutOrder, Parent=terminal})
@@ -1787,9 +1780,9 @@ addLine("> DOWNLOAD COMPLETE.", Theme.good); task.wait(0.3)
 -- ============================================================
 --  INIT
 -- ============================================================
-billboardContainer = create("ScreenGui", {Name="BCS_Crates", ResetOnSpawn=false, Parent=playerGui})
-waypointContainer  = create("ScreenGui", {Name="BCS_Waypoints", ResetOnSpawn=false, Parent=playerGui})
-monsterContainer   = create("ScreenGui", {Name="BCS_Monsters", ResetOnSpawn=false, Parent=playerGui})
+billboardContainer = create("ScreenGui", {Name="BCS_Crates", ResetOnSpawn=false, Parent=get_hidden_ui()})
+waypointContainer  = create("ScreenGui", {Name="BCS_Waypoints", ResetOnSpawn=false, Parent=get_hidden_ui()})
+monsterContainer   = create("ScreenGui", {Name="BCS_Monsters", ResetOnSpawn=false, Parent=get_hidden_ui()})
 
 if autoLoadEnabled then pcall(loadSlot, autoLoadSlot) end
 
@@ -1806,13 +1799,12 @@ if not setupRedroomsWatcher() then
         end
     end)
 end
-watchLockpickingGui()
 setupParryHooks()
 
 for key, fn in pairs(effects) do pcall(fn, State[key]) end
 
 -- ============================================================
---  LIVE UPDATE (uses UI.* refs — no more nil targetInfo crash)
+--  LIVE UPDATE
 -- ============================================================
 local function liveUpdate()
     local root = getRoot()
@@ -1890,11 +1882,9 @@ local function liveUpdate()
         if m and rp then m.distLabel.Text = math.floor((rp - m.pos).Magnitude).." studs" end
     end
     if exitMarker and rp then exitMarker.distLabel.Text = math.floor((rp - exitMarker.pos).Magnitude).." studs" end
-    -- HUD target distance
     local S = UI._stats
     if S then
         if selectedWaypoint and root then
-            -- targetInfo lives in Navigate tab; statTarget carries the visual
             S.statTarget(math.floor((root.Position - selectedWaypoint.pos).Magnitude).." studs", "Target  "..selectedWaypoint.name, Theme.good)
         else
             S.statTarget("None", "Target")
@@ -1988,8 +1978,3 @@ toggleGui(true)
 task.delay(0.9, function()
     notify("Loaded", "Backrooms Closet Suite "..VERSION.."  ·  "..QOL.keybind.Name.." toggles menu", Theme.good)
 end)
-
-print("========================================")
-print("✅ BACKROOMS CLOSET SUITE "..VERSION.." LOADED")
-print("📌 Press "..QOL.keybind.Name.." to toggle GUI")
-print("========================================")
